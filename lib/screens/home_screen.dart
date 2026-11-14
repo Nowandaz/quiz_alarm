@@ -163,7 +163,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (hide != _navHidden) setState(() => _navHidden = hide);
                     return false;
                   },
-                  child: _tabs[_currentIndex],
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOut,
+                    child: KeyedSubtree(
+                      key: ValueKey(_currentIndex),
+                      child: _tabs[_currentIndex],
+                    ),
+                  ),
                 ),
               ),
             ],

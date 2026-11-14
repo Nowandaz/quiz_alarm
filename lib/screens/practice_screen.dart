@@ -308,68 +308,73 @@ class _PracticeScreenState extends State<PracticeScreen> {
     return Column(
       children: [
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        q.topic.toUpperCase(),
-                        style: TextStyle(
-                          color: scheme.secondary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          letterSpacing: 0.6,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOut,
+            child: ListView(
+              key: ValueKey(q.id),
+              padding: const EdgeInsets.all(16),
+              children: [
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          q.topic.toUpperCase(),
+                          style: TextStyle(
+                            color: scheme.secondary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            letterSpacing: 0.6,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      if (q.image.isNotEmpty) ...[
-                        QuestionImage(q.image),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
+                        if (q.image.isNotEmpty) ...[
+                          QuestionImage(q.image),
+                          const SizedBox(height: 12),
+                        ],
+                        Text(
+                          q.questionText,
+                          style: const TextStyle(
+                            fontFamily: AppTheme.display,
+                            height: 1.25,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
-                      Text(
-                        q.questionText,
-                        style: const TextStyle(
-                          fontFamily: AppTheme.display,
-                          height: 1.25,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              if (q.type == QuestionType.mcq)
-                for (final o in q.options) _optionTile(q, o, scheme)
-              else if (!answered)
-                TextField(
-                  controller: _answerCtrl,
-                  enabled: _phase == _Phase.asking,
-                  textInputAction: TextInputAction.done,
-                  decoration: const InputDecoration(labelText: 'Your answer'),
-                  onSubmitted: (v) {
-                    if (v.trim().isNotEmpty) _submit(v);
-                  },
+                const SizedBox(height: 12),
+                if (q.type == QuestionType.mcq)
+                  for (final o in q.options) _optionTile(q, o, scheme)
+                else if (!answered)
+                  TextField(
+                    controller: _answerCtrl,
+                    enabled: _phase == _Phase.asking,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(labelText: 'Your answer'),
+                    onSubmitted: (v) {
+                      if (v.trim().isNotEmpty) _submit(v);
+                    },
+                  ),
+                if (_phase == _Phase.checking)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 250),
+                  alignment: Alignment.topCenter,
+                  child: answered
+                      ? _answerSide(q, scheme)
+                      : const SizedBox(width: double.infinity),
                 ),
-              if (_phase == _Phase.checking)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              AnimatedSize(
-                duration: const Duration(milliseconds: 250),
-                alignment: Alignment.topCenter,
-                child: answered
-                    ? _answerSide(q, scheme)
-                    : const SizedBox(width: double.infinity),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
         Padding(

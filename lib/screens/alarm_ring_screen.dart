@@ -35,7 +35,7 @@ class AlarmRingScreen extends StatefulWidget {
   State<AlarmRingScreen> createState() => _AlarmRingScreenState();
 }
 
-enum _Phase { loading, asking, grading, correct, wrong, failed }
+enum _Phase { loading, asking, grading, correct, wrong, failed, done }
 
 class _AlarmRingScreenState extends State<AlarmRingScreen> {
   static const Color _baseColor = Colors.black;
@@ -133,6 +133,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       ..start();
   }
 
+  /// Stops (or snoozes) the alarm and closes the quiz. After a dismissal
+  /// the "alarm off" greeting stays on screen for a few seconds first.
   Future<void> _finish(String result) async {
     if (_closing) return;
     _closing = true;
@@ -149,8 +151,19 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       );
       QuestionService.changes.value++;
     }
+    if (!mounted) return;
+    if (result == 'dismissed') {
+      setState(() => _phase = _Phase.done);
+      await Future.any([
+        Future<void>.delayed(const Duration(seconds: 4)),
+        _skipGreeting.future,
+      ]);
+    }
     if (mounted) Navigator.of(context).pop(result);
   }
+
+  // Completed when the user taps the greeting to leave it early.
+  final Completer<void> _skipGreeting = Completer<void>();
 
   Future<void> _submitAnswer(String answer) async {
     final q = _currentQuestion;
@@ -183,14 +196,15 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       _sfx('correct');
       _flash(const Color(0xFF0E3B1D));
       setState(() => _phase = _Phase.correct);
+      if (_correctStreak >= _needed) {
+        // Silence the alarm at once, then greet.
+        await _finish('dismissed');
+        return;
+      }
       // A short pause so the tick is seen, then straight on.
       await Future<void>.delayed(const Duration(milliseconds: 900));
       if (!mounted) return;
-      if (_correctStreak >= _needed) {
-        await _finish('dismissed');
-      } else {
-        await _loadNextQuestion();
-      }
+      await _loadNextQuestion();
     } else {
       _correctStreak = 0;
       _wrongStreak++;
@@ -225,7 +239,17 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                       _header(),
                       Expanded(
                         child: Center(
-                          child: SingleChildScrollView(child: _body()),
+                          child: SingleChildScrollView(
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              child: KeyedSubtree(
+                                key: ValueKey(
+                                  '${_phase.name}-${_currentQuestion?.id}',
+                                ),
+                                child: _body(),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                       if (_wrongStreak >= _wrongForSnooze)
@@ -361,6 +385,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         return _wrongView(q!);
       case _Phase.asking:
         return _questionView(q!);
+      case _Phase.done:
+        return _doneView();
     }
   }
 
@@ -403,13 +429,67 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       ),
       const SizedBox(height: 4),
       Text(
-        _correctStreak >= _needed
-            ? 'Alarm off. Good morning!'
-            : '${_needed - _correctStreak} more to go',
+        '${_needed - _correctStreak} more to go',
         style: const TextStyle(color: Colors.white70, fontSize: 16),
       ),
     ],
   );
+
+  /// Shown for a few seconds once the alarm is off: a greeting for the
+  /// time of day. Tap to leave it sooner.
+  Widget _doneView() {
+    final now = DateTime.now();
+    final use24 = context.read<ThemeProvider>().use24Hour;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (!_skipGreeting.isCompleted) _skipGreeting.complete();
+      },
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 500),
+        curve: Curves.easeOutBack,
+        builder: (context, t, child) => Opacity(
+          opacity: t.clamp(0, 1),
+          child: Transform.scale(scale: 0.85 + 0.15 * t, child: child),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.check_circle_rounded,
+              color: AppColors.success,
+              size: 88,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              '${greetingFor(now.hour)}!',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: AppTheme.display,
+                fontSize: 36,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              widget.preview
+                  ? 'Test finished. Nicely done.'
+                  : 'Alarm off. It is ${formatClock(now, use24Hour: use24)}.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 17),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '$_needed in a row. Well done.',
+              style: const TextStyle(color: Colors.white54),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   /// Review of a wrong answer: what was asked, what was answered, the right
   /// answer and why. Stays until "Next question" is tapped.

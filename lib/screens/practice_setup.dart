@@ -25,6 +25,7 @@ Future<void> showPracticeSetup(
 
   var topics = {...initialTopics};
   var count = 10;
+  var customCount = false; // true once "Custom" is picked
   var source = PracticeSource.bank;
   var tutor = hasKey;
   const counts = [5, 10, 20, 30];
@@ -77,11 +78,59 @@ Future<void> showPracticeSetup(
                               for (final n in counts)
                                 ChoiceChip(
                                   label: Text('$n'),
-                                  selected: count == n,
+                                  selected: !customCount && count == n,
                                   showCheckmark: false,
-                                  onSelected: (_) => refresh(() => count = n),
+                                  onSelected: (_) => refresh(() {
+                                    count = n;
+                                    customCount = false;
+                                  }),
                                 ),
+                              ChoiceChip(
+                                label: Text(
+                                  customCount ? 'Custom: $count' : 'Custom',
+                                ),
+                                selected: customCount,
+                                showCheckmark: false,
+                                onSelected: (_) =>
+                                    refresh(() => customCount = true),
+                              ),
                             ],
+                          ),
+                          // Any number from 1 to 30.
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 200),
+                            alignment: Alignment.topCenter,
+                            child: !customCount
+                                ? const SizedBox(width: double.infinity)
+                                : Row(
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Fewer',
+                                        icon: const Icon(Icons.remove_rounded),
+                                        onPressed: count > 1
+                                            ? () => refresh(() => count--)
+                                            : null,
+                                      ),
+                                      Expanded(
+                                        child: Slider(
+                                          min: 1,
+                                          max: 30,
+                                          divisions: 29,
+                                          label: '$count',
+                                          value: count.toDouble(),
+                                          onChanged: (v) =>
+                                              refresh(() => count = v.round()),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'More',
+                                        icon: const Icon(Icons.add_rounded),
+                                        onPressed: count < 30
+                                            ? () => refresh(() => count++)
+                                            : null,
+                                      ),
+                                    ],
+                                  ),
                           ),
                           label('Questions from'),
                           SegmentedButton<PracticeSource>(
