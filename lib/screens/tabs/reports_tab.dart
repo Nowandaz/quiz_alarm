@@ -90,14 +90,12 @@ class _ReportsTabState extends State<ReportsTab> {
               _StatTile(
                 label: 'Questions answered',
                 icon: Icons.quiz_rounded,
-                color: AppColors.violet,
                 value: '${report.answered}',
               ),
               const SizedBox(width: 12),
               _StatTile(
                 label: 'Correct',
                 icon: Icons.check_circle_rounded,
-                color: AppColors.mint,
                 value: accuracy == null ? '-' : '$accuracy%',
               ),
             ],
@@ -108,7 +106,6 @@ class _ReportsTabState extends State<ReportsTab> {
               _StatTile(
                 label: 'Average time to wake',
                 icon: Icons.timer_rounded,
-                color: AppColors.coral,
                 value: report.avgWakeTime == null
                     ? '-'
                     : formatDuration(report.avgWakeTime!),
@@ -117,7 +114,6 @@ class _ReportsTabState extends State<ReportsTab> {
               _StatTile(
                 label: 'Questions per alarm',
                 icon: Icons.bolt_rounded,
-                color: AppColors.amber,
                 value: report.avgWakeQuestions == null
                     ? '-'
                     : report.avgWakeQuestions!.toStringAsFixed(1),
@@ -188,17 +184,16 @@ class _StatTile extends StatelessWidget {
   final String label;
   final String value;
   final IconData icon;
-  final Color color;
   const _StatTile({
     required this.label,
     required this.value,
     required this.icon,
-    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final color = theme.colorScheme.onSurface;
     return Expanded(
       child: Card(
         child: Padding(
@@ -210,7 +205,7 @@ class _StatTile extends StatelessWidget {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.18),
+                  color: color.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(11),
                 ),
                 child: Icon(icon, color: color, size: 20),
@@ -285,7 +280,7 @@ class _DayChart extends StatelessWidget {
                                     ),
                                     Container(
                                       height: height * d.correct / peak,
-                                      color: AppColors.mint,
+                                      color: AppColors.success,
                                     ),
                                   ],
                                 ),
@@ -313,7 +308,7 @@ class _DayChart extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(width: 10, height: 10, color: AppColors.mint),
+              Container(width: 10, height: 10, color: AppColors.success),
               const SizedBox(width: 4),
               Text('Correct', style: theme.textTheme.labelSmall),
               const SizedBox(width: 14),
@@ -359,9 +354,6 @@ class _TopicRow extends StatelessWidget {
             value: topic.accuracy,
             minHeight: 6,
             borderRadius: BorderRadius.circular(4),
-            color: topic.accuracy >= 0.7
-                ? Colors.green
-                : (topic.accuracy >= 0.4 ? Colors.orange : Colors.red),
           ),
         ],
       ),

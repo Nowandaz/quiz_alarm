@@ -37,7 +37,7 @@ class AlarmRingScreen extends StatefulWidget {
 enum _Phase { loading, asking, grading, correct, wrong, failed }
 
 class _AlarmRingScreenState extends State<AlarmRingScreen> {
-  static const Color _baseColor = Color(0xFF140A1C);
+  static const Color _baseColor = Colors.black;
   static const int _wrongForSnooze = 5;
 
   int _correctStreak = 0;
@@ -180,7 +180,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       _correctStreak++;
       _wrongStreak = 0;
       _sfx('correct');
-      _flash(Colors.green.shade800);
+      _flash(const Color(0xFF0E3B1D));
       setState(() => _phase = _Phase.correct);
       // A short pause so the tick is seen, then straight on.
       await Future<void>.delayed(const Duration(milliseconds: 900));
@@ -195,7 +195,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       _wrongStreak++;
       _sfx('wrong');
       _shakeController.add(null);
-      _flash(Colors.red.shade900);
+      _flash(const Color(0xFF4A1210));
       // Stay on the review card until the user taps "Next question".
       setState(() => _phase = _Phase.wrong);
     }
@@ -205,7 +205,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   Widget build(BuildContext context) {
     // This screen is always dark, whatever the app theme is.
     return Theme(
-      data: AppTheme.dark,
+      data: AppTheme.dark(Theme.of(context).colorScheme.primary),
       child: PopScope(
         canPop: widget.preview,
         child: AnimatedContainer(
@@ -232,10 +232,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                           padding: const EdgeInsets.only(top: 8),
                           child: OutlinedButton.icon(
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.orangeAccent,
-                              side: const BorderSide(
-                                color: Colors.orangeAccent,
-                              ),
+                              foregroundColor: Colors.white70,
+                              side: const BorderSide(color: Colors.white70),
                               minimumSize: const Size.fromHeight(48),
                             ),
                             onPressed: () => _finish('snooze'),
@@ -297,7 +295,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         const SizedBox(height: 12),
         Row(
           children: [
-            const Icon(Icons.bolt, color: Colors.amber, size: 20),
+            const Icon(Icons.bolt, color: Colors.white, size: 20),
             const SizedBox(width: 4),
             Text(
               'Streak: $_correctStreak / $_needed',
@@ -318,7 +316,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
               Text(
                 'Wrong: $_wrongStreak / $_wrongForSnooze',
                 style: TextStyle(
-                  color: _wrongStreak > 0 ? Colors.redAccent : Colors.white54,
+                  color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
                 ),
               ),
           ],
@@ -329,7 +327,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
           child: LinearProgressIndicator(
             value: _needed == 0 ? 0 : _correctStreak / _needed,
             minHeight: 8,
-            color: AppColors.amber,
+            color: Colors.white,
             backgroundColor: Colors.white12,
           ),
         ),
@@ -340,7 +338,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
               'Wrong: $_wrongStreak / $_wrongForSnooze',
               textAlign: TextAlign.right,
               style: TextStyle(
-                color: _wrongStreak > 0 ? Colors.redAccent : Colors.white54,
+                color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
               ),
             ),
           ),
@@ -369,7 +367,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   Widget _loadFailed() => Column(
     mainAxisSize: MainAxisSize.min,
     children: [
-      const Icon(Icons.error_outline, color: Colors.orangeAccent, size: 40),
+      const Icon(Icons.error_outline, color: Colors.white70, size: 40),
       const SizedBox(height: 12),
       const Text(
         'A question could not be loaded.',
@@ -392,7 +390,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   Widget _correctView() => Column(
     mainAxisSize: MainAxisSize.min,
     children: [
-      const Icon(Icons.check_circle, color: Colors.greenAccent, size: 72),
+      const Icon(Icons.check_circle, color: AppColors.success, size: 72),
       const SizedBox(height: 12),
       const Text(
         'Correct!',
@@ -471,12 +469,12 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         children: [
           const Row(
             children: [
-              Icon(Icons.cancel, color: Colors.redAccent, size: 28),
+              Icon(Icons.cancel, color: AppColors.danger, size: 28),
               SizedBox(width: 8),
               Text(
                 'Not quite',
                 style: TextStyle(
-                  color: Colors.redAccent,
+                  color: AppColors.danger,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
                 ),
@@ -494,20 +492,20 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
           answerBox(
             label: 'YOUR ANSWER',
             text: _lastAnswer,
-            color: Colors.redAccent,
+            color: AppColors.danger,
             icon: Icons.close,
           ),
           answerBox(
             label: 'CORRECT ANSWER',
             text: q.correctAnswer,
-            color: Colors.greenAccent,
+            color: AppColors.success,
             icon: Icons.check,
           ),
           if (q.explanation.trim().isNotEmpty) ...[
             const Text(
               'WHY',
               style: TextStyle(
-                color: Colors.amberAccent,
+                color: Colors.white54,
                 fontSize: 12,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 0.5,
@@ -520,7 +518,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ),
             const SizedBox(height: 14),
           ],
-          GradientButton(
+          PrimaryButton(
             onPressed: _loadNextQuestion,
             icon: Icons.arrow_forward_rounded,
             label: 'Next question',
@@ -538,7 +536,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       Text(
         'TOPIC: ${q.topic.toUpperCase()}',
         style: const TextStyle(
-          color: Colors.amberAccent,
+          color: Colors.white54,
           fontWeight: FontWeight.bold,
         ),
       ),
@@ -574,7 +572,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                   ),
                   child: Row(
                     children: [
-                      LetterBadge(index: i, color: AppColors.amber),
+                      LetterBadge(index: i, color: Colors.white),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(

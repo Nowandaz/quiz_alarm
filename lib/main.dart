@@ -1,6 +1,7 @@
 /// App entry point: starts the alarm backend and wires up the providers.
 library;
 
+import 'package:dynamic_color/dynamic_color.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -39,19 +40,23 @@ class QuizAlarmApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final settings = Provider.of<ThemeProvider>(context);
 
-    return MaterialApp(
-      title: 'BrainWake Alarm',
-      debugShowCheckedModeBanner: false,
-      themeMode: settings.themeMode,
-      theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
-      // Makes every standard time widget follow the 12/24 hour setting.
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context)
-            .copyWith(alwaysUse24HourFormat: settings.use24Hour),
-        child: child!,
+    // The accent is the phone's own theme colour (Android 12+ wallpaper
+    // colours). Where the phone has none, the app's own accent is used.
+    return DynamicColorBuilder(
+      builder: (lightDynamic, darkDynamic) => MaterialApp(
+        title: 'BrainWake Alarm',
+        debugShowCheckedModeBanner: false,
+        themeMode: settings.themeMode,
+        theme: AppTheme.light(lightDynamic?.primary),
+        darkTheme: AppTheme.dark(darkDynamic?.primary),
+        // Makes every standard time widget follow the 12/24 hour setting.
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(alwaysUse24HourFormat: settings.use24Hour),
+          child: child!,
+        ),
+        home: const HomeScreen(),
       ),
-      home: const HomeScreen(),
     );
   }
 }

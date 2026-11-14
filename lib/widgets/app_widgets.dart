@@ -1,104 +1,89 @@
-/// Small building blocks shared by the screens: the glowing page
-/// background, the gradient hero card, the gradient button, letter badges
-/// and labelled pills.
+/// Small building blocks shared by the screens: the glossy card, the main
+/// button, letter badges, pills and the progress ring.
 library;
 
 import 'package:material_ui/material_ui.dart';
 
 import '../theme/app_theme.dart';
 
-/// Page background with two soft colour glows at the top.
-class GlowBackground extends StatelessWidget {
+/// Plain page background (black or white) with a faint sheen at the top.
+class AppBackground extends StatelessWidget {
   final Widget child;
-  const GlowBackground({super.key, required this.child});
+  const AppBackground({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    Widget glow(Alignment at, Color color, double size) => Align(
-      alignment: at,
-      child: IgnorePointer(
-        child: Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(
-              colors: [
-                color.withValues(alpha: dark ? 0.30 : 0.20),
-                color.withValues(alpha: 0),
-              ],
-            ),
-          ),
-        ),
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        gradient: dark
+            ? const LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment(0, -0.2),
+                colors: [Color(0xFF141416), Colors.black],
+              )
+            : null,
       ),
-    );
-    return Stack(
-      children: [
-        Positioned.fill(
-          child: ColoredBox(color: Theme.of(context).scaffoldBackgroundColor),
-        ),
-        Positioned(
-          top: -160,
-          left: -120,
-          child: glow(Alignment.center, AppColors.violet, 420),
-        ),
-        Positioned(
-          top: -120,
-          right: -160,
-          child: glow(Alignment.center, AppColors.coral, 380),
-        ),
-        Positioned.fill(child: child),
-      ],
+      child: child,
     );
   }
 }
 
-/// A rounded card filled with the dawn gradient. Text inside is white.
-class HeroCard extends StatelessWidget {
+/// A raised card with a glossy highlight: polished black in dark mode,
+/// soft white in light mode. Used for the "hero" block of a screen.
+class GlossCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final Gradient gradient;
-  const HeroCard({
+  const GlossCard({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(22),
-    this.gradient = AppColors.dawn,
   });
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        gradient: gradient,
         borderRadius: BorderRadius.circular(28),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          stops: const [0, 0.45, 1],
+          colors: dark
+              ? const [Color(0xFF2A2A2E), Color(0xFF111113), Color(0xFF060607)]
+              : const [Colors.white, Color(0xFFF7F7F9), Color(0xFFEDEDF1)],
+        ),
+        border: Border.all(
+          color: dark
+              ? Colors.white.withValues(alpha: 0.10)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.violet.withValues(alpha: 0.35),
+            color: Colors.black.withValues(alpha: dark ? 0.6 : 0.08),
             blurRadius: 30,
             offset: const Offset(0, 14),
           ),
         ],
       ),
-      child: DefaultTextStyle.merge(
-        style: const TextStyle(color: Colors.white),
-        child: IconTheme.merge(
-          data: const IconThemeData(color: Colors.white),
-          child: child,
-        ),
-      ),
+      child: child,
     );
   }
 }
 
-/// The main call-to-action: a pill filled with the dawn gradient.
-class GradientButton extends StatelessWidget {
+/// The main call-to-action: a solid pill, white on black in dark mode and
+/// black on white in light mode.
+class PrimaryButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final IconData? icon;
   final String label;
   final double height;
-  const GradientButton({
+  const PrimaryButton({
     super.key,
     required this.onPressed,
     required this.label,
@@ -108,57 +93,24 @@ class GradientButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onPressed != null;
-    return Opacity(
-      opacity: enabled ? 1 : 0.45,
-      child: Container(
-        height: height,
-        decoration: BoxDecoration(
-          gradient: AppColors.dawn,
-          borderRadius: BorderRadius.circular(height / 2),
-          boxShadow: enabled
-              ? [
-                  BoxShadow(
-                    color: AppColors.orchid.withValues(alpha: 0.4),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(height / 2),
-            onTap: onPressed,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (icon != null) ...[
-                    Icon(icon, color: Colors.white, size: 22),
-                    const SizedBox(width: 8),
-                  ],
-                  Flexible(
-                    child: Text(
-                      label,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+    final style = FilledButton.styleFrom(
+      minimumSize: Size(64, height),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      textStyle: const TextStyle(
+        fontFamily: AppTheme.body,
+        fontWeight: FontWeight.w800,
+        fontSize: 16,
       ),
     );
+    final text = Text(label, overflow: TextOverflow.ellipsis);
+    return icon == null
+        ? FilledButton(onPressed: onPressed, style: style, child: text)
+        : FilledButton.icon(
+            onPressed: onPressed,
+            style: style,
+            icon: Icon(icon, size: 22),
+            label: text,
+          );
   }
 }
 
@@ -170,13 +122,13 @@ class LetterBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? Theme.of(context).colorScheme.primary;
+    final c = color ?? Theme.of(context).colorScheme.onSurface;
     return Container(
       width: 30,
       height: 30,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.18),
+        color: c.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(9),
       ),
       child: Text(
@@ -191,7 +143,7 @@ class LetterBadge extends StatelessWidget {
   }
 }
 
-/// A small rounded label, e.g. "Hard" or "Pharmacology".
+/// A small rounded label, e.g. "Hard" or "Once".
 class Pill extends StatelessWidget {
   final String text;
   final IconData? icon;
@@ -200,11 +152,11 @@ class Pill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? Theme.of(context).colorScheme.primary;
+    final c = color ?? Theme.of(context).colorScheme.onSurface;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.14),
+        color: c.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
@@ -232,11 +184,11 @@ class Pill extends StatelessWidget {
   }
 }
 
-/// A circular progress ring with a percentage in the middle.
+/// A circular progress ring in the accent colour with "NN%" in the middle.
 class ProgressRing extends StatelessWidget {
   final double value; // 0..1
   final double size;
-  const ProgressRing({super.key, required this.value, this.size = 46});
+  const ProgressRing({super.key, required this.value, this.size = 52});
 
   @override
   Widget build(BuildContext context) {
@@ -253,15 +205,15 @@ class ProgressRing extends StatelessWidget {
               value: v,
               strokeWidth: 4.5,
               strokeCap: StrokeCap.round,
-              color: v >= 1 ? AppColors.mint : scheme.primary,
+              color: scheme.primary,
             ),
           ),
           Text(
-            '${(v * 100).round()}',
+            '${(v * 100).round()}%',
             style: TextStyle(
               fontFamily: AppTheme.display,
               fontWeight: FontWeight.w700,
-              fontSize: size * 0.3,
+              fontSize: size * 0.25,
             ),
           ),
         ],

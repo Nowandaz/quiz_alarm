@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/theme_provider.dart';
+import '../theme/app_theme.dart';
 import 'tabs/reports_tab.dart' show formatDuration;
 
 class SessionScreen extends StatefulWidget {
@@ -118,7 +119,7 @@ class _SessionScreenState extends State<SessionScreen> {
 
   Widget _attemptCard(int number, AttemptDetail a, ThemeData theme) {
     final scheme = theme.colorScheme;
-    final color = a.correct ? Colors.green : scheme.error;
+    final color = a.correct ? AppColors.success : scheme.error;
     final q = a.question;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 6),
