@@ -114,7 +114,14 @@ class AiFeedback {
 class GenerationResult {
   final int added;
   final String? error;
-  const GenerationResult({this.added = 0, this.error});
+
+  /// The new questions that were stored.
+  final List<Question> questions;
+  const GenerationResult({
+    this.added = 0,
+    this.error,
+    this.questions = const [],
+  });
 }
 
 class QuestionService {
@@ -421,12 +428,13 @@ class QuestionService {
         timeout: const Duration(seconds: 90),
         schema: _questionListSchema,
       );
-      var added = 0;
+      final stored = <Question>[];
       final items = questionItems(data);
       for (final item in items) {
         final q = validateGenerated(item, topic);
-        if (q != null && await QuestionRepository.addQuestion(q)) added++;
+        if (q != null && await QuestionRepository.addQuestion(q)) stored.add(q);
       }
+      final added = stored.length;
       if (added > 0) changes.value++;
       if (added == 0) {
         return GenerationResult(
@@ -436,10 +444,55 @@ class QuestionService {
                     '(invalid or already in the bank).',
         );
       }
-      return GenerationResult(added: added);
+      return GenerationResult(added: added, questions: stored);
     } catch (e) {
       return GenerationResult(error: e.toString());
     }
+  }
+
+  /// Writes about [count] brand-new questions for a practice session,
+  /// spread over [topicIds] (at most three topics per call, to keep the
+  /// number of AI requests small). The questions are saved to the bank
+  /// too. [error] is set if nothing could be written.
+  static Future<GenerationResult> generateFresh(
+    List<String> topicIds, {
+    required int count,
+    Random? rng,
+  }) async {
+    if (!await GeminiClient.hasApiKey()) {
+      return const GenerationResult(error: 'No API key saved.');
+    }
+    final wanted = topicIds.toSet();
+    final topics =
+        (await QuestionRepository.getTopics())
+            .where((t) => wanted.isEmpty || wanted.contains(t.id))
+            .toList()
+          ..shuffle(rng ?? Random());
+    if (topics.isEmpty) {
+      return const GenerationResult(error: 'No topics were selected.');
+    }
+    final chosen = topics.take(3).toList();
+    final per = (count / chosen.length).ceil();
+
+    final all = <Question>[];
+    String? error;
+    for (final topic in chosen) {
+      if (all.length >= count) break;
+      final r = await generateForTopic(
+        topic,
+        count: min(per, count - all.length),
+      );
+      all.addAll(r.questions);
+      if (r.error != null) {
+        error = r.error;
+        break; // quota / key / network errors would just repeat
+      }
+    }
+    return GenerationResult(
+      added: all.length,
+      questions: all,
+      error: all.isEmpty ? (error ?? 'No questions were written.') : null,
+    );
   }
 
   static bool _toppingUp = false;

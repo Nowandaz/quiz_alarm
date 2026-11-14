@@ -11,7 +11,7 @@ import '../../data/question_repository.dart';
 import '../../models/models.dart';
 import '../../services/question_service.dart';
 import '../../services/theme_provider.dart';
-import '../../theme/app_theme.dart';
+import '../../widgets/app_widgets.dart';
 import '../session_screen.dart';
 
 /// "1m 20s", "45s" or "2h 5m".
@@ -83,22 +83,50 @@ class _ReportsTabState extends State<ReportsTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 120),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          6,
+          16,
+          24 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
-          Row(
-            children: [
-              _StatTile(
-                label: 'Questions answered',
-                icon: Icons.quiz_rounded,
-                value: '${report.answered}',
-              ),
-              const SizedBox(width: 12),
-              _StatTile(
-                label: 'Correct',
-                icon: Icons.check_circle_rounded,
-                value: accuracy == null ? '-' : '$accuracy%',
-              ),
-            ],
+          // Headline: overall accuracy.
+          GlossCard(
+            child: Row(
+              children: [
+                ProgressRing(
+                  value: report.answered == 0
+                      ? 0
+                      : report.correct / report.answered,
+                  size: 96,
+                ),
+                const SizedBox(width: 20),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        accuracy == null
+                            ? 'No answers yet'
+                            : 'Overall accuracy',
+                        style: theme.textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        accuracy == null
+                            ? 'Answer a few questions and your progress '
+                                  'shows up here.'
+                            : '${report.correct} correct out of '
+                                  '${report.answered} answered',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 12),
           Row(
@@ -121,49 +149,70 @@ class _ReportsTabState extends State<ReportsTab> {
             ],
           ),
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 6, left: 4),
             child: Text(
               report.alarmsDismissed == 0
                   ? 'The alarm figures fill in after your first alarm.'
-                  : 'Alarm figures are averages over '
-                        '${report.alarmsDismissed} dismissed '
+                  : 'Averages over ${report.alarmsDismissed} dismissed '
                         'alarm${report.alarmsDismissed == 1 ? '' : 's'}.',
               style: theme.textTheme.bodySmall,
             ),
           ),
-          const SizedBox(height: 20),
-          Text('Last 14 days', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 8),
-          _DayChart(days: report.days),
-          const SizedBox(height: 20),
-          Text('By topic', style: theme.textTheme.titleMedium),
-          Text(
-            'Weakest first. Counts every answer you have given.',
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 8),
-          if (report.topics.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('Nothing answered yet.'),
+          const SizedBox(height: 16),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Last 14 days', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  _DayChart(days: report.days),
+                ],
+              ),
             ),
-          for (final t in report.topics) _TopicRow(topic: t),
-          const SizedBox(height: 20),
-          Text('History', style: theme.textTheme.titleMedium),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('By topic', style: theme.textTheme.titleMedium),
+                  Text('Weakest first.', style: theme.textTheme.bodySmall),
+                  const SizedBox(height: 8),
+                  if (report.topics.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('Nothing answered yet.'),
+                    ),
+                  for (final t in report.topics) _TopicRow(topic: t),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 22),
+          Text('History', style: theme.textTheme.titleLarge),
           const SizedBox(height: 8),
-          SegmentedButton<String>(
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: 'all', label: Text('All')),
-              ButtonSegment(value: 'alarm', label: Text('Alarms')),
-              ButtonSegment(value: 'revision', label: Text('Revision')),
-              ButtonSegment(value: 'bank', label: Text('Banks')),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final (key, label) in const [
+                ('all', 'All'),
+                ('alarm', 'Alarms'),
+                ('practice', 'Practice'),
+              ])
+                ChoiceChip(
+                  label: Text(label),
+                  selected: (_kind ?? 'all') == key,
+                  showCheckmark: false,
+                  onSelected: (_) {
+                    _kind = key == 'all' ? null : key;
+                    _load();
+                  },
+                ),
             ],
-            selected: {_kind ?? 'all'},
-            onSelectionChanged: (s) {
-              _kind = s.first == 'all' ? null : s.first;
-              _load();
-            },
           ),
           const SizedBox(height: 8),
           if (_sessions.isEmpty)
@@ -239,12 +288,7 @@ class _DayChart extends StatelessWidget {
     final peak = days.fold<int>(0, (m, d) => d.answered > m ? d.answered : m);
     const height = 110.0;
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 14, 10, 8),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(16),
-      ),
+    return SizedBox(
       child: Column(
         children: [
           SizedBox(
@@ -274,13 +318,13 @@ class _DayChart extends StatelessWidget {
                                           height *
                                           (d.answered - d.correct) /
                                           peak,
-                                      color: scheme.error.withValues(
-                                        alpha: 0.75,
+                                      color: scheme.onSurface.withValues(
+                                        alpha: 0.18,
                                       ),
                                     ),
                                     Container(
                                       height: height * d.correct / peak,
-                                      color: AppColors.success,
+                                      color: scheme.primary,
                                     ),
                                   ],
                                 ),
@@ -308,14 +352,14 @@ class _DayChart extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(width: 10, height: 10, color: AppColors.success),
+              Container(width: 10, height: 10, color: scheme.primary),
               const SizedBox(width: 4),
               Text('Correct', style: theme.textTheme.labelSmall),
               const SizedBox(width: 14),
               Container(
                 width: 10,
                 height: 10,
-                color: scheme.error.withValues(alpha: 0.75),
+                color: scheme.onSurface.withValues(alpha: 0.18),
               ),
               const SizedBox(width: 4),
               Text('Wrong', style: theme.textTheme.labelSmall),
@@ -370,9 +414,8 @@ class _SessionCard extends StatelessWidget {
     final theme = Theme.of(context);
     final s = session;
     final icon = switch (s.kind) {
-      'alarm' => Icons.alarm,
-      'revision' => Icons.school,
-      _ => Icons.library_books,
+      'alarm' => Icons.alarm_rounded,
+      _ => Icons.auto_stories_rounded,
     };
     final outcome = switch (s.outcome) {
       'dismissed' => 'Dismissed',
@@ -391,7 +434,15 @@ class _SessionCard extends StatelessWidget {
       margin: const EdgeInsets.symmetric(vertical: 5),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        leading: Icon(icon),
+        leading: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Icon(icon, color: theme.colorScheme.onSurface, size: 22),
+        ),
         title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
           '${DateFormat('EEE d MMM').format(s.startedAt)}, '

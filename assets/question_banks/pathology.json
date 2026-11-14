@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "unit": {
+    "id": "pathology",
+    "name": "Pathology",
+    "description": "Sample spotter questions. The pictures are placeholder drawings, to be replaced with real photographs."
+  },
+  "topics": [
+    {
+      "id": "path-haematology-spotters",
+      "name": "Haematology spotters",
+      "questions": [
+        {
+          "id": "path-haem-001",
+          "type": "mcq",
+          "image": "assets/question_images/sickle_cells.png",
+          "text": "What abnormal red cell shape is shown in this blood film?",
+          "options": [
+            "Sickle cells",
+            "Target cells",
+            "Spherocytes",
+            "Schistocytes",
+            "Elliptocytes"
+          ],
+          "answer": "Sickle cells",
+          "explanation": "The elongated, crescent-shaped cells are sickle cells (drepanocytes). Haemoglobin S polymerises when deoxygenated and distorts the red cell. They are seen in sickle cell disease, not in the trait under normal conditions."
+        },
+        {
+          "id": "path-haem-002",
+          "type": "saq",
+          "image": "assets/question_images/target_cells.png",
+          "text": "Name the red cells shown, which have a dark spot in the middle of the pale centre.",
+          "answer": "Target cells",
+          "alt_answers": [
+            "Codocytes",
+            "Target cell",
+            "Codocyte"
+          ],
+          "explanation": "Target cells (codocytes) have extra membrane relative to their haemoglobin content, so haemoglobin collects in the centre like a bullseye. They are seen in thalassaemia, liver disease, haemoglobin C disease and after splenectomy."
+        },
+        {
+          "id": "path-haem-003",
+          "type": "mcq",
+          "image": "assets/question_images/rouleaux.png",
+          "text": "The red cells here are stacked like piles of coins. This appearance is most typical of:",
+          "options": [
+            "Multiple myeloma",
+            "Iron deficiency anaemia",
+            "Sickle cell disease",
+            "G6PD deficiency",
+            "Hereditary spherocytosis"
+          ],
+          "answer": "Multiple myeloma",
+          "explanation": "This is rouleaux formation. High levels of plasma proteins such as the paraprotein of multiple myeloma (or fibrinogen in inflammation) cancel the negative charge that normally keeps red cells apart. It is also the reason the ESR is raised."
+        },
+        {
+          "id": "path-haem-004",
+          "type": "mcq",
+          "image": "assets/question_images/schistocytes.png",
+          "text": "The fragmented red cells shown are schistocytes. Their presence indicates:",
+          "options": [
+            "Microangiopathic haemolytic anaemia",
+            "Megaloblastic anaemia",
+            "Thalassaemia trait",
+            "Aplastic anaemia",
+            "Polycythaemia vera"
+          ],
+          "answer": "Microangiopathic haemolytic anaemia",
+          "explanation": "Schistocytes are red cells cut into fragments (triangles and helmet shapes) as they are forced through fibrin strands or damaged valves. They point to microangiopathic haemolysis: DIC, TTP, haemolytic uraemic syndrome, or a mechanical heart valve."
+        },
+        {
+          "id": "path-haem-005",
+          "type": "saq",
+          "image": "assets/question_images/hypersegmented_neutrophil.png",
+          "text": "The neutrophil in the centre has six nuclear lobes. Deficiency of which vitamin classically causes this?",
+          "answer": "Vitamin B12",
+          "alt_answers": [
+            "B12",
+            "Cobalamin",
+            "Folate",
+            "Folic acid",
+            "Vitamin B12 or folate",
+            "B12 or folate",
+            "Vitamin B9"
+          ],
+          "explanation": "A neutrophil with six or more lobes is hypersegmented. It is an early sign of megaloblastic anaemia, caused by vitamin B12 or folate deficiency, in which DNA synthesis is impaired while the cytoplasm matures normally."
+        },
+        {
+          "id": "path-haem-006",
+          "type": "mcq",
+          "image": "assets/question_images/malaria_rings.png",
+          "text": "Small ring forms with a red dot are seen inside several red cells. What is the most likely diagnosis?",
+          "options": [
+            "Malaria",
+            "Sickle cell disease",
+            "Iron deficiency anaemia",
+            "Infectious mononucleosis",
+            "Lead poisoning"
+          ],
+          "answer": "Malaria",
+          "explanation": "The rings are trophozoites of Plasmodium: a blue ring of cytoplasm with a red chromatin dot (\"signet ring\" form). Thick and thin blood films remain the standard for diagnosing malaria and counting the parasites."
+        },
+        {
+          "id": "path-haem-007",
+          "type": "saq",
+          "image": "assets/question_images/auer_rods.png",
+          "text": "What are the red rod-shaped inclusions in the cytoplasm of this blast cell called?",
+          "answer": "Auer rods",
+          "alt_answers": [
+            "Auer rod",
+            "Auer bodies",
+            "Auer body"
+          ],
+          "explanation": "Auer rods are needle-like fused granules found only in myeloid blasts. Finding them confirms acute myeloid leukaemia rather than acute lymphoblastic leukaemia; they are numerous in acute promyelocytic leukaemia."
+        }
+      ]
+    },
+    {
+      "id": "path-histology-spotters",
+      "name": "Histopathology spotters",
+      "questions": [
+        {
+          "id": "path-hist-001",
+          "type": "mcq",
+          "image": "assets/question_images/reed_sternberg.png",
+          "text": "The large cell with two mirror-image nuclei (\"owl eyes\") is characteristic of:",
+          "options": [
+            "Hodgkin lymphoma",
+            "Burkitt lymphoma",
+            "Chronic myeloid leukaemia",
+            "Multiple myeloma",
+            "Infectious mononucleosis"
+          ],
+          "answer": "Hodgkin lymphoma",
+          "explanation": "This is a Reed-Sternberg cell: a large cell with two nuclei or lobes, each with a big red nucleolus, in a background of small lymphocytes. It is the neoplastic cell of classical Hodgkin lymphoma and is positive for CD15 and CD30."
+        },
+        {
+          "id": "path-hist-002",
+          "type": "mcq",
+          "image": "assets/question_images/signet_ring_cells.png",
+          "text": "The cells shown have a large mucin vacuole pushing the nucleus to one side. They are typical of which tumour?",
+          "options": [
+            "Diffuse-type gastric adenocarcinoma",
+            "Squamous cell carcinoma of the oesophagus",
+            "Hepatocellular carcinoma",
+            "Carcinoid tumour",
+            "Gastrointestinal stromal tumour"
+          ],
+          "answer": "Diffuse-type gastric adenocarcinoma",
+          "explanation": "These are signet ring cells. Mucin fills the cytoplasm and flattens the nucleus against the cell membrane. They are the hallmark of diffuse-type gastric adenocarcinoma, which infiltrates the stomach wall (linitis plastica) and can spread to the ovaries as Krukenberg tumours."
+        },
+        {
+          "id": "path-hist-003",
+          "type": "saq",
+          "image": "assets/question_images/steatosis.png",
+          "text": "These liver cells contain large clear fat vacuoles that push the nucleus aside. Name this change.",
+          "answer": "Steatosis",
+          "alt_answers": [
+            "Fatty change",
+            "Fatty liver",
+            "Hepatic steatosis",
+            "Macrovesicular steatosis",
+            "Fatty liver disease"
+          ],
+          "explanation": "This is macrovesicular steatosis (fatty change): triglyceride accumulates as one large droplet per hepatocyte. The common causes are alcohol, obesity and diabetes (non-alcoholic fatty liver disease). It is reversible if the cause is removed."
+        }
+      ]
+    }
+  ]
+}

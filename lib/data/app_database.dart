@@ -18,7 +18,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 2;
+  static const int schemaVersion = 3;
   static const String fileName = 'brainwake.db';
 
   static Database? _db;
@@ -84,6 +84,7 @@ class AppDatabase {
         answer TEXT NOT NULL,
         alt_answers TEXT NOT NULL DEFAULT '[]',
         explanation TEXT NOT NULL DEFAULT '',
+        image TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'seed',
         created_at INTEGER NOT NULL
       )''');
@@ -135,6 +136,12 @@ class AppDatabase {
         "ALTER TABLE attempts ADD COLUMN user_answer TEXT NOT NULL DEFAULT ''",
       );
       await db.execute('ALTER TABLE attempts ADD COLUMN duration_ms INTEGER');
+    }
+    if (from < 3) {
+      // Picture for spotter questions (asset path or web address).
+      await db.execute(
+        "ALTER TABLE questions ADD COLUMN image TEXT NOT NULL DEFAULT ''",
+      );
     }
   }
 

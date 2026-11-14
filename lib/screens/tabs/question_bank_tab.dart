@@ -1,5 +1,6 @@
-/// Question Banks tab: units and their topics with progress. Tap a topic
-/// to practise it offline, browse its questions or add more with AI.
+/// Question Banks tab: one card per unit (Pharmacology, Pathology...) with
+/// its mastery. Tap a unit to see its topics. "Practise" opens the set-up
+/// sheet where topics, number of questions and source are chosen.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -9,7 +10,8 @@ import '../../data/question_repository.dart';
 import '../../models/models.dart';
 import '../../services/bank_provider.dart';
 import '../../widgets/app_widgets.dart';
-import '../practice_screen.dart';
+import '../practice_setup.dart';
+import '../unit_screen.dart';
 import '../topic_screen.dart';
 
 /// Asks for a name and unit, creates the topic and opens it.
@@ -111,9 +113,29 @@ class QuestionBankTab extends StatelessWidget {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 120),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        6,
+        16,
+        24 + MediaQuery.paddingOf(context).bottom,
+      ),
       children: [
-        for (final unit in bank.units) ...[
+        PrimaryButton(
+          icon: Icons.play_arrow_rounded,
+          label: 'Practise',
+          onPressed: () => showPracticeSetup(
+            context,
+            initialTopics: bank.topics.map((t) => t.id).toSet(),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Choose topics, how many questions, and bank or AI questions.',
+          style: theme.textTheme.bodySmall,
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 18),
+        for (final unit in bank.units)
           Builder(
             builder: (context) {
               final topics = bank.topicsOf(unit.id);
@@ -127,143 +149,78 @@ class QuestionBankTab extends StatelessWidget {
               );
               final share = total == 0 ? 0.0 : mastered / total;
 
-              // Subject summary: name, counts, "Practise all" and the
-              // overall mastery bar.
-              return GlossCard(
-                padding: const EdgeInsets.all(18),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(28),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => UnitScreen(unit: unit)),
+                  ),
+                  child: GlossCard(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                unit.name,
-                                style: theme.textTheme.titleLarge,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${topics.length} topics \u00b7 $total questions',
-                                style: theme.textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                        FilledButton(
-                          onPressed: total == 0
-                              ? null
-                              : () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => PracticeScreen(
-                                      title: unit.name,
-                                      selectors: [unit.id],
-                                    ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    unit.name,
+                                    style: theme.textTheme.titleLarge,
                                   ),
-                                ),
-                          style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 42),
-                            padding: const EdgeInsets.symmetric(horizontal: 18),
-                          ),
-                          child: const Text('Practise all'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Overall subject mastery',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.w700,
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${topics.length} topics · $total questions',
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
+                            Icon(
+                              Icons.chevron_right_rounded,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ],
                         ),
-                        Text(
-                          '${(share * 100).round()}% mastered',
-                          style: TextStyle(
-                            color: scheme.primary,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 12,
-                          ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Overall subject mastery',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '${(share * 100).round()}% mastered',
+                              style: TextStyle(
+                                color: scheme.primary,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(
+                          value: share,
+                          minHeight: 8,
+                          borderRadius: BorderRadius.circular(6),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    LinearProgressIndicator(
-                      value: share,
-                      minHeight: 8,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ],
+                  ),
                 ),
               );
             },
           ),
-          const SizedBox(height: 14),
-          for (final topic in bank.topicsOf(unit.id))
-            _TopicCard(topic: topic, stats: bank.statsOf(topic.id)),
-          const SizedBox(height: 14),
-        ],
       ],
-    );
-  }
-}
-
-class _TopicCard extends StatelessWidget {
-  final Topic topic;
-  final TopicStats stats;
-  const _TopicCard({required this.topic, required this.stats});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Card(
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
-            child: Row(
-              children: [
-                ProgressRing(
-                  value: stats.total == 0 ? 0 : stats.mastered / stats.total,
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(topic.name, style: theme.textTheme.titleMedium),
-                      const SizedBox(height: 3),
-                      Text(
-                        stats.total == 0
-                            ? 'No questions yet'
-                            : '${stats.total} questions \u00b7 ${stats.seen} answered \u00b7 '
-                                  '${stats.mastered} correct',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

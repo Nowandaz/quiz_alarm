@@ -66,7 +66,12 @@ class AlarmTab extends StatelessWidget {
         return Stack(
           children: [
             ListView(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 170),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                6,
+                16,
+                90 + MediaQuery.paddingOf(context).bottom,
+              ),
               children: [
                 GlossCard(
                   child: Column(
@@ -205,7 +210,8 @@ class AlarmTab extends StatelessWidget {
             if (provider.alarms.isNotEmpty)
               Positioned(
                 right: 16,
-                bottom: 104,
+                // Sits just above the navigation bar on every screen size.
+                bottom: 12 + MediaQuery.paddingOf(context).bottom,
                 child: PrimaryButton(
                   icon: Icons.add_rounded,
                   label: 'Add Alarm',

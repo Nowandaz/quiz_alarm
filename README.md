@@ -9,10 +9,9 @@ up to 15); 5 wrong in a row unlocks a snooze of 3, 5 or 10 minutes (the
 
 | Tab | What it does |
 |---|---|
-| **Alarms** | Alarms with repeat days, ringtone, fade-in and the topics to ask about. |
-| **Question Banks** | Units -> topics with progress. Practise a topic offline: after each answer you get the correct answer and a stored explanation. "Generate with AI" adds more questions. |
-| **Free Revision** | Flash cards over random or chosen topics. With a Gemini key, the AI tutor explains where your answer went wrong; offline it falls back to the stored explanation. |
-| **Reports** | Totals, a 14-day chart, accuracy per topic, average time and number of questions it takes to dismiss an alarm, and the history of every alarm and practice session. Tap a session to see each question, what you answered, the correct answer and the explanation. |
+| **Alarms** | Alarms with repeat days, ringtone, fade-in, difficulty, snooze length and the topics to ask about. Settings open from here. |
+| **Banks** | One card per unit (Pharmacology, Pathology...). A unit lists its topics; a topic lists its questions marked done / not done. "Practise" opens a set-up sheet: number of questions, topics, and whether questions come from the saved bank, are written now by the AI, or both. |
+| **Reports** | Overall accuracy, a 14-day chart, accuracy per topic, average time and number of questions it takes to dismiss an alarm, and the history of every alarm and practice session. Tap a session to see each question, what you answered, the correct answer and the explanation. |
 
 Settings holds the theme, the Gemini API key / model, and the status of AI
 question generation (with the real error if it fails).
@@ -82,6 +81,11 @@ To change or add content: edit the file (or add a new `<unit>.json`) and
 **raise `version`**. On next launch the app re-imports it. Keep question
 `id`s stable: progress is tied to them. AI-generated questions and topics
 the user added are never removed by a re-import.
+
+A question may carry a picture (a "spotter"): add `"image":
+"assets/question_images/<file>.png"` to it. `pathology.json` holds 10 sample
+spotters whose pictures are **placeholder drawings** made by
+`tool/make_spotters.py`; replace them with real photographs.
 
 `pharmacology.json` currently holds **starter test data** (6 placeholder
 subtopics, 60 questions). Multiple-choice questions have exactly 5 options.

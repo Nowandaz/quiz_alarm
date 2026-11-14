@@ -10,7 +10,9 @@ import '../models/models.dart';
 import '../services/bank_provider.dart';
 import '../services/gemini_client.dart';
 import '../services/question_service.dart';
-import 'practice_screen.dart';
+import '../theme/app_theme.dart';
+import '../widgets/question_image.dart';
+import 'practice_setup.dart';
 
 class TopicScreen extends StatefulWidget {
   final Topic topic;
@@ -22,6 +24,10 @@ class TopicScreen extends StatefulWidget {
 
 class _TopicScreenState extends State<TopicScreen> {
   List<Question>? _questions;
+
+  // Question id -> was the latest answer correct. Absent = not done yet.
+  Map<String, bool> _progress = {};
+  String _filter = 'all'; // all | todo | done
   bool _generating = false;
 
   @override
@@ -32,7 +38,14 @@ class _TopicScreenState extends State<TopicScreen> {
 
   Future<void> _load() async {
     final list = await QuestionRepository.getQuestions(widget.topic.id);
-    if (mounted) setState(() => _questions = list);
+    final progress = await QuestionRepository.getQuestionProgress(
+      widget.topic.id,
+    );
+    if (!mounted) return;
+    setState(() {
+      _questions = list;
+      _progress = progress;
+    });
   }
 
   void _message(String title, String body) {
@@ -128,7 +141,12 @@ class _TopicScreenState extends State<TopicScreen> {
       body: questions == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                24 + MediaQuery.paddingOf(context).bottom,
+              ),
               children: [
                 Text(
                   '${stats.total} questions - ${stats.seen} answered - '
@@ -140,14 +158,10 @@ class _TopicScreenState extends State<TopicScreen> {
                   onPressed: questions.isEmpty
                       ? null
                       : () async {
-                          await Navigator.push(
+                          await showPracticeSetup(
                             context,
-                            MaterialPageRoute(
-                              builder: (_) => PracticeScreen(
-                                title: widget.topic.name,
-                                selectors: [widget.topic.id],
-                              ),
-                            ),
+                            initialTopics: {widget.topic.id},
+                            title: widget.topic.name,
                           );
                           _load();
                         },
@@ -177,28 +191,82 @@ class _TopicScreenState extends State<TopicScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text('All questions', style: theme.textTheme.titleMedium),
-                const SizedBox(height: 4),
+                Text('Questions', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 8),
+                // Which ones have been done, and which are still to do.
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final (key, label) in [
+                      ('all', 'All (${questions.length})'),
+                      (
+                        'todo',
+                        'Not done (${questions.where((q) => !_progress.containsKey(q.id)).length})',
+                      ),
+                      (
+                        'done',
+                        'Done (${questions.where((q) => _progress.containsKey(q.id)).length})',
+                      ),
+                    ])
+                      ChoiceChip(
+                        label: Text(label),
+                        selected: _filter == key,
+                        showCheckmark: false,
+                        onSelected: (_) => setState(() => _filter = key),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 if (questions.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
                     child: Text('No questions in this topic yet.'),
                   ),
-                for (final q in questions)
+                for (final q in questions.where(
+                  (q) => switch (_filter) {
+                    'todo' => !_progress.containsKey(q.id),
+                    'done' => _progress.containsKey(q.id),
+                    _ => true,
+                  },
+                ))
                   Card(
                     margin: const EdgeInsets.symmetric(vertical: 4),
                     clipBehavior: Clip.antiAlias,
                     child: ExpansionTile(
                       shape: const Border(),
+                      leading: switch (_progress[q.id]) {
+                        true => const Icon(
+                          Icons.check_circle,
+                          color: AppColors.success,
+                        ),
+                        false => const Icon(
+                          Icons.cancel,
+                          color: AppColors.danger,
+                        ),
+                        null => Icon(
+                          Icons.radio_button_unchecked,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      },
                       title: Text(q.questionText),
                       subtitle: Text(
-                        '${q.type == QuestionType.mcq ? 'Multiple choice' : 'Short answer'}'
-                        '${q.source == 'ai' ? ' - AI generated' : ''}',
+                        '${switch (_progress[q.id]) {
+                          true => 'Done, correct',
+                          false => 'Done, wrong last time',
+                          null => 'Not done',
+                        }}'
+                        ' \u00b7 ${q.type == QuestionType.mcq ? 'Multiple choice' : 'Short answer'}'
+                        '${q.image.isNotEmpty ? ' \u00b7 Picture' : ''}'
+                        '${q.source == 'ai' ? ' \u00b7 AI generated' : ''}',
                         style: theme.textTheme.bodySmall,
                       ),
                       expandedCrossAxisAlignment: CrossAxisAlignment.start,
                       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                       children: [
+                        if (q.image.isNotEmpty) ...[
+                          QuestionImage(q.image, maxHeight: 160),
+                          const SizedBox(height: 8),
+                        ],
                         for (final o in q.options)
                           Text(
                             '${o == q.correctAnswer ? '✓' : '•'} $o',

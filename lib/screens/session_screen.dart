@@ -11,6 +11,7 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/theme_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/question_image.dart';
 import 'tabs/reports_tab.dart' show formatDuration;
 
 class SessionScreen extends StatefulWidget {
@@ -40,8 +41,8 @@ class _SessionScreenState extends State<SessionScreen> {
     final attempts = _attempts;
     final kind = switch (s.kind) {
       'alarm' => 'Alarm',
-      'revision' => 'Free revision',
-      _ => 'Question bank',
+      'revision' => 'Practice',
+      _ => 'Practice',
     };
 
     return Scaffold(
@@ -49,7 +50,12 @@ class _SessionScreenState extends State<SessionScreen> {
       body: attempts == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                24 + MediaQuery.paddingOf(context).bottom,
+              ),
               children: [
                 Text(
                   '$kind - ${DateFormat('EEEE d MMMM').format(s.startedAt)}, '
@@ -151,6 +157,10 @@ class _SessionScreenState extends State<SessionScreen> {
               ],
             ),
             const SizedBox(height: 8),
+            if (q.image.isNotEmpty) ...[
+              QuestionImage(q.image, maxHeight: 150),
+              const SizedBox(height: 8),
+            ],
             Text(
               q.questionText,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),

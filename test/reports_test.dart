@@ -64,7 +64,7 @@ void main() {
     expect(s.questions, 2);
     expect(s.correct, 1);
     expect(s.duration, isNotNull);
-    expect(await QuestionRepository.getSessions(kind: 'revision'), isEmpty);
+    expect(await QuestionRepository.getSessions(kind: 'practice'), isEmpty);
 
     final attempts = await QuestionRepository.getSessionAttempts(id!);
     expect(attempts.map((a) => a.question.id), [qs[0].id, qs[1].id]);

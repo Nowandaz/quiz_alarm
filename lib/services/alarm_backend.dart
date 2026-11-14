@@ -82,13 +82,22 @@ class NativeAlarmBackend implements AlarmBackend {
   @override
   Future<void> init() => Alarm.init();
 
+  /// `Alarm.ringing` always holds the alarms ringing right now (also one
+  /// that was already ringing when the app was opened), so turn every id
+  /// that newly appears in it into one ring event.
   @override
-  late final Stream<AlarmRing> rings = Alarm.ringStream.stream.map(
-    (s) => AlarmRing(s.id, s.notificationTitle),
-  );
+  late final Stream<AlarmRing> rings = () {
+    var known = <int>{};
+    return Alarm.ringing.expand((set) {
+      final fresh = set.alarms.where((a) => !known.contains(a.id)).toList();
+      known = set.alarms.map((a) => a.id).toSet();
+      return fresh.map((a) => AlarmRing(a.id, a.notificationSettings.title));
+    });
+  }();
 
   @override
   Future<void> set(AlarmRequest r) async {
+    final fade = Duration(milliseconds: (r.fadeDuration * 1000).round());
     await Alarm.set(
       alarmSettings: AlarmSettings(
         id: r.id,
@@ -96,11 +105,25 @@ class NativeAlarmBackend implements AlarmBackend {
         assetAudioPath: r.audioPath,
         loopAudio: true,
         vibrate: r.vibrate,
-        volume: r.volume,
-        fadeDuration: r.fadeDuration,
-        notificationTitle: r.title,
-        notificationBody: r.body,
-        enableNotificationOnKill: true,
+        // Played on the phone's ALARM volume, raised to [r.volume] and
+        // held there: the volume keys cannot turn it down while it rings.
+        volumeSettings: fade > Duration.zero
+            ? VolumeSettings.fade(
+                volume: r.volume,
+                fadeDuration: fade,
+                volumeEnforced: true,
+              )
+            : VolumeSettings.fixed(volume: r.volume, volumeEnforced: true),
+        notificationSettings: NotificationSettings(
+          title: r.title,
+          body: r.body,
+        ),
+        // Android alarms keep working after the app is swiped away, so
+        // only iOS (where they do not) shows the "may not ring" warning.
+        warningNotificationOnKill: defaultTargetPlatform == TargetPlatform.iOS,
+        // Swiping the app away must not silence a ringing alarm.
+        androidStopAlarmOnTermination: false,
+        // Turns the screen on and shows the quiz over the lock screen.
         androidFullScreenIntent: true,
       ),
     );
@@ -116,7 +139,7 @@ class NativeAlarmBackend implements AlarmBackend {
 
   @override
   DateTime? scheduledTime(int id) {
-    for (final a in Alarm.getAlarms()) {
+    for (final a in Alarm.scheduled.value.alarms) {
       if (a.id == id) return a.dateTime;
     }
     return null;

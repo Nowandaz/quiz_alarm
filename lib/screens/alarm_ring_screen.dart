@@ -19,6 +19,7 @@ import '../services/question_service.dart';
 import '../services/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/question_image.dart';
 import '../widgets/shake_widget.dart';
 
 class AlarmRingScreen extends StatefulWidget {
@@ -541,6 +542,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         ),
       ),
       const SizedBox(height: 12),
+      if (q.image.isNotEmpty) ...[
+        QuestionImage(q.image, maxHeight: 190),
+        const SizedBox(height: 12),
+      ],
       Text(
         q.questionText,
         style: const TextStyle(
