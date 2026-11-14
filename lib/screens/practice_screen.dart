@@ -327,7 +327,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
           child: answered
               ? SizedBox(
                   width: double.infinity,
-                  child: GradientButton(
+                  child: PrimaryButton(
                     onPressed: _next,
                     icon: Icons.arrow_forward_rounded,
                     label: 'Next question',
@@ -381,8 +381,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
     Color border = scheme.outlineVariant;
     IconData? icon;
     if (answered && isCorrect) {
-      background = AppColors.mint.withValues(alpha: 0.16);
-      border = AppColors.mint;
+      background = AppColors.success.withValues(alpha: 0.16);
+      border = AppColors.success;
       icon = Icons.check_circle;
     } else if (answered && isPicked) {
       background = scheme.error.withValues(alpha: 0.16);
@@ -431,7 +431,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   /// The "back of the card": verdict, answer, explanation, AI tutor.
   Widget _answerSide(Question q, ColorScheme scheme) {
     final skipped = _userAnswer.isEmpty;
-    final color = _verdict ? AppColors.mint : scheme.error;
+    final color = _verdict ? AppColors.success : scheme.error;
     final hasExplanation = q.explanation.trim().isNotEmpty;
 
     return Column(

@@ -101,7 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       extendBody: true,
-      body: GlowBackground(
+      body: AppBackground(
         child: SafeArea(
           bottom: false,
           child: Column(
@@ -118,20 +118,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontWeight: FontWeight.w700,
                           letterSpacing: -0.5,
                         ),
-                        // The app name wears the dawn gradient.
-                        child: _currentIndex == 0
-                            ? ShaderMask(
-                                blendMode: BlendMode.srcIn,
-                                shaderCallback: (r) =>
-                                    AppColors.dawn.createShader(r),
-                                child: title,
-                              )
-                            : DefaultTextStyle.merge(
-                                style: TextStyle(color: scheme.onSurface),
-                                child: title,
-                              ),
+                        child: title,
                       ),
                     ),
+                    if (_currentIndex == 1)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: FilledButton.icon(
+                          onPressed: () => showAddTopicDialog(context),
+                          icon: const Icon(Icons.add_rounded, size: 18),
+                          label: const Text('Topic'),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                          ),
+                        ),
+                      ),
                     IconButton(
                       tooltip: 'Settings',
                       icon: const Icon(Icons.tune_rounded),

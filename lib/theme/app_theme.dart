@@ -1,59 +1,52 @@
 /// The app's look: colours, fonts and the styling of every standard
 /// component (cards, buttons, inputs, sheets, navigation). Screens take
 /// their style from here, so change the look in this one place.
+///
+/// The palette is deliberately three colours: black, white and ONE accent
+/// (the phone's own theme colour where the phone provides one). Greys are
+/// just black/white at different strengths. Green and red appear only to
+/// mean "correct" and "wrong".
 library;
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 class AppColors {
-  // The "dawn" gradient used for hero cards and primary actions.
-  static const Color violet = Color(0xFF7C5CFF);
-  static const Color orchid = Color(0xFFC86BFA);
-  static const Color coral = Color(0xFFFF8F6B);
-  static const Color amber = Color(0xFFFFB86B);
-  static const Color mint = Color(0xFF3DDC97);
-  static const Color rose = Color(0xFFFF6B81);
+  /// Accent used when the phone does not offer a theme colour.
+  static const Color accentDark = Color(0xFFA99BFF);
+  static const Color accentLight = Color(0xFF5B45E0);
 
-  static const LinearGradient dawn = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [violet, orchid, coral],
-  );
-
-  static const LinearGradient night = LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [Color(0xFF2A1F6B), Color(0xFF4B2C8F), Color(0xFF8A3F8F)],
-  );
+  /// Meaning-only colours: correct / wrong.
+  static const Color success = Color(0xFF30D158);
+  static const Color danger = Color(0xFFFF453A);
 }
 
 class AppTheme {
   static const String display = 'Outfit';
   static const String body = 'PlusJakartaSans';
 
-  static ThemeData get dark => _build(
+  /// Black theme. [accent] is the phone's theme colour, if it has one.
+  static ThemeData dark([Color? accent]) => _build(
     brightness: Brightness.dark,
-    background: const Color(0xFF0B0B14),
-    surface: const Color(0xFF151524),
-    surfaceHigh: const Color(0xFF1E1E32),
-    outline: const Color(0xFF2E2E48),
-    primary: const Color(0xFF9D8CFF),
-    onPrimary: const Color(0xFF14102E),
-    text: const Color(0xFFF2F1FA),
-    muted: const Color(0xFFA5A3BD),
+    background: Colors.black,
+    surface: const Color(0xFF0C0C0E),
+    surfaceHigh: const Color(0xFF17171A),
+    outline: const Color(0xFF26262A),
+    primary: accent ?? AppColors.accentDark,
+    text: const Color(0xFFF5F5F7),
+    muted: const Color(0xFF8E8E93),
   );
 
-  static ThemeData get light => _build(
+  /// White theme.
+  static ThemeData light([Color? accent]) => _build(
     brightness: Brightness.light,
-    background: const Color(0xFFF5F4FB),
-    surface: Colors.white,
-    surfaceHigh: const Color(0xFFECEAF8),
-    outline: const Color(0xFFDDDAEE),
-    primary: const Color(0xFF5B45E0),
-    onPrimary: Colors.white,
-    text: const Color(0xFF17152B),
-    muted: const Color(0xFF65627F),
+    background: Colors.white,
+    surface: const Color(0xFFF6F6F8),
+    surfaceHigh: const Color(0xFFECECEF),
+    outline: const Color(0xFFE2E2E6),
+    primary: accent ?? AppColors.accentLight,
+    text: const Color(0xFF0A0A0A),
+    muted: const Color(0xFF6E6E73),
   );
 
   static ThemeData _build({
@@ -63,21 +56,20 @@ class AppTheme {
     required Color surfaceHigh,
     required Color outline,
     required Color primary,
-    required Color onPrimary,
     required Color text,
     required Color muted,
   }) {
     final isDark = brightness == Brightness.dark;
     final scheme =
         ColorScheme.fromSeed(
-          seedColor: AppColors.violet,
+          seedColor: primary,
           brightness: brightness,
         ).copyWith(
           primary: primary,
-          onPrimary: onPrimary,
-          secondary: isDark ? AppColors.amber : const Color(0xFFD9652B),
-          tertiary: AppColors.mint,
-          error: isDark ? AppColors.rose : const Color(0xFFD23B55),
+          onPrimary: background,
+          secondary: primary,
+          tertiary: AppColors.success,
+          error: AppColors.danger,
           surface: background,
           onSurface: text,
           onSurfaceVariant: muted,
@@ -145,13 +137,17 @@ class AppTheme {
         elevation: 0,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(24),
           side: BorderSide(color: outline),
         ),
       ),
       dividerTheme: DividerThemeData(color: outline, thickness: 1),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
+          backgroundColor: text,
+          foregroundColor: background,
+          disabledBackgroundColor: surfaceHigh,
+          disabledForegroundColor: muted,
           shape: pill,
           minimumSize: const Size(64, 50),
           textStyle: const TextStyle(
@@ -176,6 +172,7 @@ class AppTheme {
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
+          foregroundColor: primary,
           textStyle: const TextStyle(
             fontFamily: body,
             fontWeight: FontWeight.w700,
@@ -207,7 +204,7 @@ class AppTheme {
         shape: pill,
         side: BorderSide(color: outline),
         backgroundColor: surface,
-        selectedColor: primary.withValues(alpha: isDark ? 0.28 : 0.16),
+        selectedColor: primary.withValues(alpha: isDark ? 0.22 : 0.12),
         checkmarkColor: primary,
         labelStyle: TextStyle(
           fontFamily: body,
@@ -218,10 +215,8 @@ class AppTheme {
       segmentedButtonTheme: SegmentedButtonThemeData(
         style: SegmentedButton.styleFrom(
           side: BorderSide(color: outline),
-          selectedBackgroundColor: primary.withValues(
-            alpha: isDark ? 0.28 : 0.16,
-          ),
-          selectedForegroundColor: text,
+          selectedBackgroundColor: text,
+          selectedForegroundColor: background,
           foregroundColor: muted,
           textStyle: const TextStyle(
             fontFamily: body,
@@ -234,7 +229,7 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         height: 68,
-        indicatorColor: primary.withValues(alpha: isDark ? 0.26 : 0.16),
+        indicatorColor: text.withValues(alpha: isDark ? 0.14 : 0.08),
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
             fontFamily: body,
@@ -247,7 +242,7 @@ class AppTheme {
         ),
         iconTheme: WidgetStateProperty.resolveWith(
           (states) => IconThemeData(
-            color: states.contains(WidgetState.selected) ? primary : muted,
+            color: states.contains(WidgetState.selected) ? text : muted,
           ),
         ),
       ),
@@ -272,7 +267,7 @@ class AppTheme {
       ),
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
-        backgroundColor: isDark ? const Color(0xFF2A2A44) : text,
+        backgroundColor: isDark ? const Color(0xFF1F1F23) : text,
         contentTextStyle: TextStyle(
           fontFamily: body,
           color: isDark ? text : Colors.white,
@@ -287,14 +282,14 @@ class AppTheme {
         circularTrackColor: outline,
       ),
       floatingActionButtonTheme: FloatingActionButtonThemeData(
-        backgroundColor: primary,
-        foregroundColor: onPrimary,
+        backgroundColor: text,
+        foregroundColor: background,
         elevation: 2,
         shape: pill,
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
-          (s) => s.contains(WidgetState.selected) ? Colors.white : muted,
+          (s) => s.contains(WidgetState.selected) ? background : muted,
         ),
         trackColor: WidgetStateProperty.resolveWith(
           (s) => s.contains(WidgetState.selected) ? primary : surfaceHigh,

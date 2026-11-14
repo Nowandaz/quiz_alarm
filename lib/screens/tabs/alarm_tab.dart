@@ -68,7 +68,7 @@ class AlarmTab extends StatelessWidget {
             ListView(
               padding: const EdgeInsets.fromLTRB(16, 6, 16, 170),
               children: [
-                HeroCard(
+                GlossCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -85,24 +85,23 @@ class AlarmTab extends StatelessWidget {
                           ),
                           Text(
                             DateFormat('EEE d MMM').format(now),
-                            style: const TextStyle(color: Colors.white70),
+                            style: theme.textTheme.bodySmall,
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      const FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: ClockDisplay(),
-                      ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
+                      // Tap to switch between digital and analog.
+                      const ClockDisplay(),
+                      const SizedBox(height: 16),
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
-                          vertical: 9,
+                          vertical: 10,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.22),
+                          color: theme.colorScheme.onSurface.withValues(
+                            alpha: 0.07,
+                          ),
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Row(
@@ -112,6 +111,7 @@ class AlarmTab extends StatelessWidget {
                                   ? Icons.notifications_off_rounded
                                   : Icons.notifications_active_rounded,
                               size: 18,
+                              color: theme.colorScheme.primary,
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -206,7 +206,7 @@ class AlarmTab extends StatelessWidget {
               Positioned(
                 right: 16,
                 bottom: 104,
-                child: GradientButton(
+                child: PrimaryButton(
                   icon: Icons.add_rounded,
                   label: 'Add Alarm',
                   onPressed: () => _openEditor(context),
@@ -235,14 +235,10 @@ class _EmptyAlarms extends StatelessWidget {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                gradient: AppColors.dawn,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Icon(
-                Icons.alarm_add_rounded,
-                color: Colors.white,
-                size: 32,
-              ),
+              child: const Icon(Icons.alarm_add_rounded, size: 32),
             ),
             const SizedBox(height: 14),
             Text('No alarms yet', style: theme.textTheme.titleLarge),
@@ -253,7 +249,7 @@ class _EmptyAlarms extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            GradientButton(
+            PrimaryButton(
               icon: Icons.add_rounded,
               label: 'Add Alarm',
               onPressed: onAdd,
@@ -393,7 +389,6 @@ class _AlarmCard extends StatelessWidget {
                     Pill(
                       AlarmItem.difficultyName(a.requiredStreak),
                       icon: Icons.bolt_rounded,
-                      color: scheme.secondary,
                     ),
                   ],
                 ),

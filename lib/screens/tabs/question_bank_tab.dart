@@ -12,88 +12,91 @@ import '../../widgets/app_widgets.dart';
 import '../practice_screen.dart';
 import '../topic_screen.dart';
 
-class QuestionBankTab extends StatelessWidget {
-  const QuestionBankTab({super.key});
-
-  Future<void> _addTopic(BuildContext context, BankProvider bank) async {
-    final nameCtrl = TextEditingController();
-    String unitId = QuestionRepository.customUnitId;
-    final created = await showDialog<Topic>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Add a topic'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                autofocus: true,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
-                  labelText: 'Topic name',
-                  hintText: 'e.g. Antimalarial drugs',
-                ),
+/// Asks for a name and unit, creates the topic and opens it.
+Future<void> showAddTopicDialog(BuildContext context) async {
+  final bank = context.read<BankProvider>();
+  final nameCtrl = TextEditingController();
+  String unitId = QuestionRepository.customUnitId;
+  final created = await showDialog<Topic>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setDialogState) => AlertDialog(
+        title: const Text('Add a topic'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: nameCtrl,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Topic name',
+                hintText: 'e.g. Antimalarial drugs',
               ),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: unitId,
-                decoration: const InputDecoration(labelText: 'Unit'),
-                items: [
-                  for (final u in bank.units)
-                    if (u.id != QuestionRepository.customUnitId)
-                      DropdownMenuItem(value: u.id, child: Text(u.name)),
-                  const DropdownMenuItem(
-                    value: QuestionRepository.customUnitId,
-                    child: Text('My topics'),
-                  ),
-                ],
-                onChanged: (v) => setDialogState(() => unitId = v ?? unitId),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'New topics start empty. Open the topic and tap '
-                '"Generate with AI" to fill it.',
-                style: Theme.of(ctx).textTheme.bodySmall,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
             ),
-            FilledButton(
-              onPressed: () async {
-                final name = nameCtrl.text.trim();
-                if (name.isEmpty) return;
-                final t = await QuestionRepository.addCustomTopic(
-                  name,
-                  unitId: unitId,
-                );
-                if (ctx.mounted) Navigator.pop(ctx, t);
-              },
-              child: const Text('Add'),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: unitId,
+              decoration: const InputDecoration(labelText: 'Unit'),
+              items: [
+                for (final u in bank.units)
+                  if (u.id != QuestionRepository.customUnitId)
+                    DropdownMenuItem(value: u.id, child: Text(u.name)),
+                const DropdownMenuItem(
+                  value: QuestionRepository.customUnitId,
+                  child: Text('My topics'),
+                ),
+              ],
+              onChanged: (v) => setDialogState(() => unitId = v ?? unitId),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'New topics start empty. Open the topic and tap '
+              '"Generate with AI" to fill it.',
+              style: Theme.of(ctx).textTheme.bodySmall,
             ),
           ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final name = nameCtrl.text.trim();
+              if (name.isEmpty) return;
+              final t = await QuestionRepository.addCustomTopic(
+                name,
+                unitId: unitId,
+              );
+              if (ctx.mounted) Navigator.pop(ctx, t);
+            },
+            child: const Text('Add'),
+          ),
+        ],
       ),
+    ),
+  );
+  if (created == null) return;
+  await bank.reload();
+  if (context.mounted) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => TopicScreen(topic: created)),
     );
-    if (created == null) return;
-    await bank.reload();
-    if (context.mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => TopicScreen(topic: created)),
-      );
-    }
   }
+}
+
+class QuestionBankTab extends StatelessWidget {
+  const QuestionBankTab({super.key});
 
   @override
   Widget build(BuildContext context) {
     final bank = context.watch<BankProvider>();
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
 
     if (bank.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -107,61 +110,105 @@ class QuestionBankTab extends StatelessWidget {
       );
     }
 
-    return Stack(
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 120),
       children: [
-        ListView(
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 180),
-          children: [
-            for (final unit in bank.units) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 10, 0, 12),
-                child: Row(
+        for (final unit in bank.units) ...[
+          Builder(
+            builder: (context) {
+              final topics = bank.topicsOf(unit.id);
+              final total = topics.fold<int>(
+                0,
+                (n, t) => n + bank.statsOf(t.id).total,
+              );
+              final mastered = topics.fold<int>(
+                0,
+                (n, t) => n + bank.statsOf(t.id).mastered,
+              );
+              final share = total == 0 ? 0.0 : mastered / total;
+
+              // Subject summary: name, counts, "Practise all" and the
+              // overall mastery bar.
+              return GlossCard(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(unit.name, style: theme.textTheme.titleLarge),
-                          Text(
-                            '${bank.topicsOf(unit.id).length} topics, '
-                            '${bank.topicsOf(unit.id).fold<int>(0, (n, t) => n + bank.statsOf(t.id).total)} questions',
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                    FilledButton.tonal(
-                      onPressed: bank.topicsOf(unit.id).isEmpty
-                          ? null
-                          : () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => PracticeScreen(
-                                  title: unit.name,
-                                  selectors: [unit.id],
-                                ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                unit.name,
+                                style: theme.textTheme.titleLarge,
                               ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${topics.length} topics \u00b7 $total questions',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        FilledButton(
+                          onPressed: total == 0
+                              ? null
+                              : () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => PracticeScreen(
+                                      title: unit.name,
+                                      selectors: [unit.id],
+                                    ),
+                                  ),
+                                ),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 42),
+                            padding: const EdgeInsets.symmetric(horizontal: 18),
+                          ),
+                          child: const Text('Practise all'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Overall subject mastery',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontWeight: FontWeight.w700,
                             ),
-                      child: const Text('Practise all'),
+                          ),
+                        ),
+                        Text(
+                          '${(share * 100).round()}% mastered',
+                          style: TextStyle(
+                            color: scheme.primary,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(
+                      value: share,
+                      minHeight: 8,
+                      borderRadius: BorderRadius.circular(6),
                     ),
                   ],
                 ),
-              ),
-              for (final topic in bank.topicsOf(unit.id))
-                _TopicCard(topic: topic, stats: bank.statsOf(topic.id)),
-            ],
-          ],
-        ),
-        Positioned(
-          right: 16,
-          bottom: 104,
-          child: FloatingActionButton.extended(
-            heroTag: 'add-topic',
-            onPressed: () => _addTopic(context, bank),
-            icon: const Icon(Icons.add),
-            label: const Text('Add topic'),
+              );
+            },
           ),
-        ),
+          const SizedBox(height: 14),
+          for (final topic in bank.topicsOf(unit.id))
+            _TopicCard(topic: topic, stats: bank.statsOf(topic.id)),
+          const SizedBox(height: 14),
+        ],
       ],
     );
   }
@@ -201,7 +248,7 @@ class _TopicCard extends StatelessWidget {
                       Text(
                         stats.total == 0
                             ? 'No questions yet'
-                            : '${stats.total} questions - ${stats.seen} answered - '
+                            : '${stats.total} questions \u00b7 ${stats.seen} answered \u00b7 '
                                   '${stats.mastered} correct',
                         style: theme.textTheme.bodySmall,
                       ),

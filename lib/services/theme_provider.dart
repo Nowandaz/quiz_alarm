@@ -1,5 +1,5 @@
-/// App-wide display settings: dark / light theme and the 12 or 24 hour
-/// clock. Saved on the device.
+/// App-wide display settings: dark / light theme, the 12 or 24 hour clock
+/// and the digital / analog clock face. Saved on the device.
 library;
 
 import 'package:intl/intl.dart';
@@ -15,6 +15,11 @@ class ThemeProvider extends ChangeNotifier {
   /// True = 18:30, false = 6:30 PM.
   bool get use24Hour => _use24Hour;
 
+  bool _analogClock = false;
+
+  /// True = the home clock shows an analog face.
+  bool get analogClock => _analogClock;
+
   ThemeProvider() {
     _load();
   }
@@ -24,6 +29,7 @@ class ThemeProvider extends ChangeNotifier {
     final isDark = prefs.getBool('isDarkTheme') ?? true;
     _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
     _use24Hour = prefs.getBool('use24Hour') ?? false;
+    _analogClock = prefs.getBool('analogClock') ?? false;
     notifyListeners();
   }
 
@@ -32,6 +38,13 @@ class ThemeProvider extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('isDarkTheme', isDark);
+  }
+
+  Future<void> setAnalogClock(bool value) async {
+    _analogClock = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('analogClock', value);
   }
 
   Future<void> setUse24Hour(bool value) async {
