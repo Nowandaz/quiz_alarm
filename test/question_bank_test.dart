@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -61,7 +62,7 @@ void main() {
       final all = await QuestionRepository.getTopics();
       expect(
         (await QuestionRepository.resolveTopicIds(['Pharmacology'])).length,
-        all.length,
+        all.where((t) => t.unitId == 'pharmacology').length,
       );
       expect(await QuestionRepository.resolveTopicIds(['antimicrobials']), [
         'pharm-antimicrobials',
@@ -77,6 +78,44 @@ void main() {
         'Central nervous system drugs',
       );
     });
+  });
+
+  test('pathology spotters have pictures that exist in the app', () async {
+    final topics = (await QuestionRepository.getTopics())
+        .where((t) => t.unitId == 'pathology')
+        .toList();
+    expect(topics.length, 2);
+    var spotters = 0;
+    for (final t in topics) {
+      for (final q in await QuestionRepository.getQuestions(t.id)) {
+        spotters++;
+        expect(q.image, startsWith('assets/question_images/'), reason: q.id);
+        expect(File(q.image).existsSync(), isTrue, reason: q.image);
+        expect(q.explanation, isNotEmpty);
+      }
+    }
+    expect(spotters, 10);
+  });
+
+  test('getQuestionProgress tells done from not done', () async {
+    final qs = await QuestionRepository.getQuestions('pharm-cns');
+    await QuestionRepository.recordAttempt(
+      qs[0].id,
+      correct: false,
+      mode: 'bank',
+    );
+    await QuestionRepository.recordAttempt(
+      qs[0].id,
+      correct: true,
+      mode: 'bank',
+    );
+    await QuestionRepository.recordAttempt(
+      qs[1].id,
+      correct: false,
+      mode: 'bank',
+    );
+    final p = await QuestionRepository.getQuestionProgress('pharm-cns');
+    expect(p, {qs[0].id: true, qs[1].id: false});
   });
 
   group('importUnit', () {
@@ -317,6 +356,36 @@ void main() {
     });
 
     test(
+      'generateFresh returns the new questions for a practice session',
+      () async {
+        expect(
+          (await QuestionService.generateFresh(const [], count: 4)).error,
+          contains('No API key'),
+        );
+        await resetApp(apiKey: 'k');
+        var n = 0;
+        fakeGemini(
+          (_) => ok({
+            'questions': [
+              for (var i = 0; i < 2; i++)
+                {...two[1], 'questionText': 'Fresh question ${n++}?'},
+            ],
+          }),
+        );
+        final r = await QuestionService.generateFresh(const [
+          'pharm-cns',
+          'pharm-antimicrobials',
+        ], count: 4);
+        expect(r.error, isNull);
+        expect(r.questions.length, 4);
+        expect(r.questions.every((q) => q.source == 'ai'), isTrue);
+        // They are saved to the bank as well.
+        final saved = await QuestionRepository.getQuestions('pharm-cns');
+        expect(saved.where((q) => q.source == 'ai').length, 2);
+      },
+    );
+
+    test(
       'topUp does nothing without a key and fills low topics with one',
       () async {
         fakeGemini((_) => ok({'questions': two}));
@@ -332,9 +401,11 @@ void main() {
           }),
         );
         // Every seed topic has 10 unseen questions: nothing to do at target 5.
-        expect((await QuestionService.topUp(const [])).added, 0);
+        expect((await QuestionService.topUp(const ['Pharmacology'])).added, 0);
         // With a higher target, at most two topics are filled per run.
-        final r = await QuestionService.topUp(const [], targetUnseen: 11);
+        final r = await QuestionService.topUp(const [
+          'Pharmacology',
+        ], targetUnseen: 11);
         expect(r.added, 2);
         expect(await QuestionService.lastStatus(), contains('Added 2'));
       },

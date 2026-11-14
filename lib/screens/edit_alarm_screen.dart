@@ -488,7 +488,12 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          8,
+          16,
+          24 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           Center(child: Text(_getTimeUntil(), style: muted)),
           const SizedBox(height: 16),

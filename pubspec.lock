@@ -5,10 +5,10 @@ packages:
     dependency: "direct main"
     description:
       name: alarm
-      sha256: "80192920d08c9cf630ce5b2e8b904f7e9730d3a97e01cbfad4665651b2a7678a"
+      sha256: "38550afb9c43162b25147d88411973a759d6bef335048f7e5984a640b0ac152f"
       url: "https://pub.dev"
     source: hosted
-    version: "3.1.7"
+    version: "5.15.0"
   args:
     dependency: transitive
     description:
@@ -169,6 +169,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.1.0"
+  equatable:
+    dependency: transitive
+    description:
+      name: equatable
+      sha256: "3bce007a596ff8b3119c45d68aaef631272537c03d30e5d4534dd24bf4c5eaa2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.0"
   fake_async:
     dependency: transitive
     description:
@@ -218,10 +226,10 @@ packages:
     dependency: transitive
     description:
       name: flutter_fgbg
-      sha256: e02ad0738ba5fc7f331b62acb0d74aa540626a6441ae18fad685faa5ac4ad7a5
+      sha256: "8e6707b853f8c3b8d8688f28836f2d34754b9084252eb2a9903491289eb97ba9"
       url: "https://pub.dev"
     source: hosted
-    version: "0.6.0"
+    version: "0.8.0"
   flutter_lints:
     dependency: "direct dev"
     description:
@@ -373,6 +381,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.6.7"
+  json_annotation:
+    dependency: transitive
+    description:
+      name: json_annotation
+      sha256: "2a743920d81b7910627f68ee2c9ac1fc0bfee32b9fc3403587d7c6791ca12f80"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.12.0"
   leak_tracker:
     dependency: transitive
     description:
@@ -653,6 +669,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
+  rxdart:
+    dependency: transitive
+    description:
+      name: rxdart
+      sha256: "5c3004a4a8dbb94bd4bf5412a4def4acdaa12e12f269737a5751369e12d1a962"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.28.0"
   shared_preferences:
     dependency: "direct main"
     description:

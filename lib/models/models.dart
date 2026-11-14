@@ -70,6 +70,10 @@ class Question {
   /// (e.g. "Epinephrine" for "Adrenaline").
   final List<String> altAnswers;
 
+  /// Picture the question is about (spotter questions): an asset path or
+  /// a web address. Empty for ordinary questions.
+  final String image;
+
   /// Why the answer is right. Stored so explanations work offline.
   final String explanation;
 
@@ -85,6 +89,7 @@ class Question {
     this.options = const [],
     required this.correctAnswer,
     this.altAnswers = const [],
+    this.image = '',
     this.explanation = '',
     this.source = 'seed',
   });
@@ -103,6 +108,7 @@ class Question {
     options: options ?? this.options,
     correctAnswer: correctAnswer,
     altAnswers: altAnswers,
+    image: image,
     explanation: explanation ?? this.explanation,
     source: source,
   );
@@ -126,6 +132,7 @@ class Question {
       options: list(row['options']),
       correctAnswer: row['answer'] as String,
       altAnswers: list(row['alt_answers']),
+      image: (row['image'] ?? '') as String,
       explanation: (row['explanation'] ?? '') as String,
       source: (row['source'] ?? 'seed') as String,
     );

@@ -123,12 +123,12 @@ class QuestionRepository {
           );
           await txn.rawInsert(
             'INSERT INTO questions(id, topic_id, type, text, text_key, options, '
-            'answer, alt_answers, explanation, source, created_at) '
-            "VALUES(?,?,?,?,?,?,?,?,?,'seed',?) ON CONFLICT(id) DO UPDATE SET "
+            'answer, alt_answers, explanation, image, source, created_at) '
+            "VALUES(?,?,?,?,?,?,?,?,?,?,'seed',?) ON CONFLICT(id) DO UPDATE SET "
             'topic_id = excluded.topic_id, type = excluded.type, '
             'text = excluded.text, text_key = excluded.text_key, '
             'options = excluded.options, answer = excluded.answer, '
-            'alt_answers = excluded.alt_answers, explanation = excluded.explanation',
+            'alt_answers = excluded.alt_answers, image = excluded.image, explanation = excluded.explanation',
             [
               id,
               topicId,
@@ -139,6 +139,7 @@ class QuestionRepository {
               (q['answer'] as String).trim(),
               jsonEncode(q['alt_answers'] ?? const []),
               (q['explanation'] ?? '') as String,
+              (q['image'] ?? '') as String,
               now,
             ],
           );
@@ -392,6 +393,7 @@ class QuestionRepository {
       'answer': q.correctAnswer.trim(),
       'alt_answers': jsonEncode(q.altAnswers),
       'explanation': q.explanation.trim(),
+      'image': q.image,
       'source': q.source,
       'created_at': DateTime.now().millisecondsSinceEpoch,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
@@ -441,6 +443,19 @@ class QuestionRepository {
     } catch (e) {
       debugPrint('Could not record the answer: $e');
     }
+  }
+
+  /// For one topic: question id -> whether the latest answer was correct.
+  /// Questions never answered are not in the map.
+  static Future<Map<String, bool>> getQuestionProgress(String topicId) async {
+    final rows = await (await _db).rawQuery(
+      'SELECT q.id AS id, la.correct AS correct FROM questions q '
+      'JOIN attempts la ON la.id = '
+      '(SELECT MAX(a.id) FROM attempts a WHERE a.question_id = q.id) '
+      'WHERE q.topic_id = ?',
+      [topicId],
+    );
+    return {for (final r in rows) r['id'] as String: r['correct'] == 1};
   }
 
   /// Per-topic totals, keyed by topic id.
@@ -579,9 +594,10 @@ class QuestionRepository {
       'SELECT s.*, COUNT(a.id) AS questions, '
       'COALESCE(SUM(a.correct), 0) AS correct_count '
       'FROM sessions s LEFT JOIN attempts a ON a.session_id = s.id '
-      '${kind == null ? '' : 'WHERE s.kind = ? '}'
+      // 'practice' covers both kinds of practice session.
+      '${kind == null ? '' : (kind == 'practice' ? "WHERE s.kind IN ('bank', 'revision') " : 'WHERE s.kind = ? ')}'
       'GROUP BY s.id ORDER BY s.started_at DESC LIMIT ?',
-      [?kind, limit],
+      [if (kind != null && kind != 'practice') kind, limit],
     );
     return rows
         .map(

@@ -16,6 +16,10 @@ import '../services/gemini_client.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/question_image.dart';
+
+/// Where a practice session takes its questions from.
+enum PracticeSource { bank, ai, both }
 
 class PracticeScreen extends StatefulWidget {
   final String title;
@@ -29,25 +33,38 @@ class PracticeScreen extends StatefulWidget {
   /// Stored with each answer: 'revision' or 'bank'.
   final String mode;
 
+  /// Stop after this many questions. Null = until "Finish" is tapped.
+  final int? limit;
+
+  /// Saved questions, questions the AI writes now, or half of each.
+  final PracticeSource source;
+
   const PracticeScreen({
     super.key,
     required this.title,
     required this.selectors,
     this.aiTutor = false,
     this.mode = 'bank',
+    this.limit,
+    this.source = PracticeSource.bank,
   });
 
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
 }
 
-enum _Phase { loading, asking, checking, answered, empty }
+enum _Phase { preparing, loading, asking, checking, answered, empty }
 
 class _PracticeScreenState extends State<PracticeScreen> {
   final _answerCtrl = TextEditingController();
   final Set<String> _shown = {};
 
   _Phase _phase = _Phase.loading;
+
+  // Questions the AI wrote for this session, served before bank ones.
+  final List<Question> _fresh = [];
+  String? _prepareError;
+  bool _useBank = false; // the AI failed and the user chose the bank
   Question? _question;
   String _userAnswer = '';
   bool _verdict = false;
@@ -72,7 +89,33 @@ class _PracticeScreenState extends State<PracticeScreen> {
     GeminiClient.hasApiKey().then((v) {
       if (mounted) setState(() => _hasKey = v);
     });
-    _next();
+    _start();
+  }
+
+  bool get _limitReached => widget.limit != null && _answered >= widget.limit!;
+
+  /// True when there is nothing more to ask after the current question.
+  bool get _isLast =>
+      _limitReached ||
+      (widget.source == PracticeSource.ai && !_useBank && _fresh.isEmpty);
+
+  Future<void> _start() async {
+    if (widget.source == PracticeSource.bank) return _next();
+    // Ask the AI for new questions first; this can take up to a minute.
+    setState(() => _phase = _Phase.preparing);
+    final total = widget.limit ?? 10;
+    final wanted = widget.source == PracticeSource.ai
+        ? total
+        : (total / 2).ceil();
+    final ids = await QuestionRepository.resolveTopicIds(widget.selectors);
+    final result = await QuestionService.generateFresh(ids, count: wanted);
+    if (!mounted) return;
+    _fresh.addAll(result.questions);
+    if (_fresh.isEmpty) {
+      setState(() => _prepareError = result.error ?? 'Nothing was written.');
+      return;
+    }
+    await _next();
   }
 
   @override
@@ -88,10 +131,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
   Future<void> _next() async {
     setState(() => _phase = _Phase.loading);
     _answerCtrl.clear();
-    final q = await QuestionService.nextQuestion(
-      widget.selectors,
-      exclude: _shown,
-    );
+    final q = _fresh.isNotEmpty
+        ? _fresh.removeAt(0).shuffled()
+        : await QuestionService.nextQuestion(widget.selectors, exclude: _shown);
     if (!mounted) return;
     setState(() {
       _question = q;
@@ -223,7 +265,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
             child: Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Text(
-                '$_correct / $_answered',
+                widget.limit == null
+                    ? '$_correct / $_answered'
+                    : '$_answered / ${widget.limit}',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -237,6 +281,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   Widget _body(BuildContext context) {
     switch (_phase) {
+      case _Phase.preparing:
+        return _preparing(context);
       case _Phase.loading:
         return const Center(child: CircularProgressIndicator());
       case _Phase.empty:
@@ -281,6 +327,10 @@ class _PracticeScreenState extends State<PracticeScreen> {
                         ),
                       ),
                       const SizedBox(height: 10),
+                      if (q.image.isNotEmpty) ...[
+                        QuestionImage(q.image),
+                        const SizedBox(height: 12),
+                      ],
                       Text(
                         q.questionText,
                         style: const TextStyle(
@@ -328,9 +378,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
               ? SizedBox(
                   width: double.infinity,
                   child: PrimaryButton(
-                    onPressed: _next,
-                    icon: Icons.arrow_forward_rounded,
-                    label: 'Next question',
+                    onPressed: _isLast ? _finish : _next,
+                    icon: _isLast
+                        ? Icons.flag_rounded
+                        : Icons.arrow_forward_rounded,
+                    label: _isLast ? 'Finish' : 'Next question',
                   ),
                 )
               : Row(
@@ -368,6 +420,53 @@ class _PracticeScreenState extends State<PracticeScreen> {
                 ),
         ),
       ],
+    );
+  }
+
+  /// Shown while the AI writes the session's questions, or if it failed.
+  Widget _preparing(BuildContext context) {
+    final error = _prepareError;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: error == null
+              ? const [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 20),
+                  Text(
+                    'The AI is writing your questions.\n'
+                    'This can take up to a minute.',
+                    textAlign: TextAlign.center,
+                  ),
+                ]
+              : [
+                  const Icon(Icons.cloud_off_rounded, size: 40),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'New questions could not be written.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    error,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 16),
+                  PrimaryButton(
+                    label: 'Use the question bank instead',
+                    onPressed: () {
+                      _prepareError = null;
+                      _useBank = true;
+                      _next();
+                    },
+                  ),
+                ],
+        ),
+      ),
     );
   }
 

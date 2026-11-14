@@ -1,7 +1,9 @@
-/// The app shell: glowing background, header, the four tabs in a floating
-/// navigation bar, and the hook that opens the quiz when an alarm rings.
+/// The app shell: header, the three tabs (Alarms, Banks, Reports) in a
+/// floating navigation bar that hides while scrolling down, and the hook
+/// that opens the quiz when an alarm rings.
 library;
 
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -13,7 +15,6 @@ import '../widgets/app_widgets.dart';
 import 'alarm_ring_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/alarm_tab.dart';
-import 'tabs/free_revision_tab.dart';
 import 'tabs/question_bank_tab.dart';
 import 'tabs/reports_tab.dart';
 
@@ -25,16 +26,18 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+
+  // The bottom bar slides away while scrolling down a page and comes back
+  // when scrolling up.
+  bool _navHidden = false;
   final List<Widget> _tabs = const [
     AlarmTab(),
     QuestionBankTab(),
-    FreeRevisionTab(),
     ReportsTab(),
   ];
   static const List<String> _titles = [
     'BrainWake',
     'Question banks',
-    'Revision',
     'Reports',
   ];
 
@@ -134,63 +137,82 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       ),
-                    IconButton(
-                      tooltip: 'Settings',
-                      icon: const Icon(Icons.tune_rounded),
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const SettingsScreen(),
+                    if (_currentIndex == 0)
+                      IconButton(
+                        tooltip: 'Settings',
+                        icon: const Icon(Icons.tune_rounded),
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const SettingsScreen(),
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),
-              Expanded(child: _tabs[_currentIndex]),
+              Expanded(
+                child: NotificationListener<UserScrollNotification>(
+                  onNotification: (n) {
+                    if (n.metrics.axis != Axis.vertical) return false;
+                    final hide = n.direction == ScrollDirection.reverse
+                        ? true
+                        : (n.direction == ScrollDirection.forward
+                              ? false
+                              : _navHidden);
+                    if (hide != _navHidden) setState(() => _navHidden = hide);
+                    return false;
+                  },
+                  child: _tabs[_currentIndex],
+                ),
+              ),
             ],
           ),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        child: Container(
-          margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(30),
-            border: Border.all(color: scheme.outlineVariant),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(
-                  alpha: theme.brightness == Brightness.dark ? 0.45 : 0.10,
+      bottomNavigationBar: AnimatedSlide(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        offset: _navHidden ? const Offset(0, 1.6) : Offset.zero,
+        child: SafeArea(
+          child: Container(
+            margin: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(30),
+              border: Border.all(color: scheme.outlineVariant),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(
+                    alpha: theme.brightness == Brightness.dark ? 0.45 : 0.10,
+                  ),
+                  blurRadius: 24,
+                  offset: const Offset(0, 10),
                 ),
-                blurRadius: 24,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: NavigationBar(
-            selectedIndex: _currentIndex,
-            onDestinationSelected: (i) => setState(() => _currentIndex = i),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.alarm_rounded),
-                label: 'Alarms',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.auto_stories_rounded),
-                label: 'Banks',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.style_rounded),
-                label: 'Revision',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.insights_rounded),
-                label: 'Reports',
-              ),
-            ],
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: NavigationBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: (i) => setState(() {
+                _currentIndex = i;
+                _navHidden = false;
+              }),
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.alarm_rounded),
+                  label: 'Alarms',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.auto_stories_rounded),
+                  label: 'Banks',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.insights_rounded),
+                  label: 'Reports',
+                ),
+              ],
+            ),
           ),
         ),
       ),
