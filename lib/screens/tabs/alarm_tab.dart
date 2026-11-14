@@ -19,14 +19,6 @@ import '../edit_alarm_screen.dart';
 class AlarmTab extends StatelessWidget {
   const AlarmTab({super.key});
 
-  String _greeting(int hour) {
-    if (hour < 5) return 'Still up?';
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    if (hour < 21) return 'Good evening';
-    return 'Good night';
-  }
-
   /// When the soonest enabled alarm will ring, and which one it is.
   (AlarmItem, DateTime)? _next(AlarmProvider provider) {
     final now = DateTime.now();
@@ -81,7 +73,7 @@ class AlarmTab extends StatelessWidget {
                         children: [
                           Expanded(
                             child: Text(
-                              _greeting(now.hour),
+                              greetingFor(now.hour),
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                                 fontSize: 15,
@@ -181,8 +173,9 @@ class AlarmTab extends StatelessWidget {
                 const SizedBox(height: 4),
                 if (provider.alarms.isEmpty)
                   _EmptyAlarms(onAdd: () => _openEditor(context)),
-                for (final a in provider.alarms)
-                  Padding(
+                _AlarmList(
+                  alarms: provider.alarms,
+                  itemBuilder: (a) => Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: _AlarmCard(
                       alarm: a,
@@ -205,6 +198,7 @@ class AlarmTab extends StatelessWidget {
                       },
                     ),
                   ),
+                ),
               ],
             ),
             if (provider.alarms.isNotEmpty)
@@ -221,6 +215,66 @@ class AlarmTab extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// The alarm cards. A new alarm slides in; a deleted one shrinks and fades
+/// away instead of vanishing.
+class _AlarmList extends StatefulWidget {
+  final List<AlarmItem> alarms;
+  final Widget Function(AlarmItem) itemBuilder;
+  const _AlarmList({required this.alarms, required this.itemBuilder});
+
+  @override
+  State<_AlarmList> createState() => _AlarmListState();
+}
+
+class _AlarmListState extends State<_AlarmList> {
+  // What is on screen, in order, including alarms that are animating out.
+  late List<AlarmItem> _shown = List.of(widget.alarms);
+  final Set<int> _leaving = {};
+  bool _first = true;
+
+  @override
+  void didUpdateWidget(_AlarmList old) {
+    super.didUpdateWidget(old);
+    _first = false;
+    final current = {for (final a in widget.alarms) a.id: a};
+    final next = <AlarmItem>[];
+    for (final a in _shown) {
+      if (current.containsKey(a.id)) {
+        next.add(current[a.id]!);
+        _leaving.remove(a.id); // deleted then re-added
+      } else {
+        next.add(a);
+        _leaving.add(a.id);
+      }
+    }
+    final shownIds = _shown.map((a) => a.id).toSet();
+    next.addAll(widget.alarms.where((a) => !shownIds.contains(a.id)));
+    _shown = next;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (final a in _shown)
+          AppearDisappear(
+            key: ValueKey(a.id),
+            animateIn: !_first,
+            leaving: _leaving.contains(a.id),
+            onGone: () => setState(() {
+              _shown.removeWhere((x) => x.id == a.id);
+              _leaving.remove(a.id);
+            }),
+            child: IgnorePointer(
+              ignoring: _leaving.contains(a.id),
+              child: widget.itemBuilder(a),
+            ),
+          ),
+      ],
     );
   }
 }

@@ -147,14 +147,57 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     setState(() => _topics = all ? [] : picked.toList());
   }
 
+  /// The folder uploaded ringtones are kept in.
+  Future<Directory> _ringtoneDir() async {
+    final docs = await getApplicationDocumentsDirectory();
+    return Directory('${docs.path}/ringtones');
+  }
+
+  /// Every ringtone uploaded so far (for any alarm), newest first.
+  Future<List<File>> _loadUploads() async {
+    if (kIsWeb) return [];
+    try {
+      final dir = await _ringtoneDir();
+      if (!await dir.exists()) return [];
+      final files = dir.listSync().whereType<File>().toList()
+        ..sort((a, b) => b.path.compareTo(a.path));
+      return files;
+    } catch (e) {
+      debugPrint('Could not list uploaded ringtones: $e');
+      return [];
+    }
+  }
+
+  /// Removes an uploaded ringtone, unless an alarm still uses it.
+  Future<bool> _deleteUpload(File file) async {
+    final inUse =
+        _audioPath == file.path ||
+        context.read<AlarmProvider>().alarms.any(
+          (a) => a.audioPath == file.path,
+        );
+    if (inUse) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('An alarm uses this ringtone. Change it there first.'),
+        ),
+      );
+      return false;
+    }
+    try {
+      await file.delete();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _pickAudioFile() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.audio);
     if (result == null || result.files.single.path == null) return;
     // file_picker hands back a temporary cache copy the OS may delete.
     // Keep our own copy so the alarm never goes silent.
     try {
-      final docs = await getApplicationDocumentsDirectory();
-      final dir = Directory('${docs.path}/ringtones');
+      final dir = await _ringtoneDir();
       await dir.create(recursive: true);
       final name = result.files.single.name;
       final dest = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_$name';
@@ -199,15 +242,16 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     }
   }
 
-  void _showRingtonePicker() {
-    final custom = !_defaultRingtones.any((t) => t['path'] == _audioPath);
+  Future<void> _showRingtonePicker() async {
+    var uploads = await _loadUploads();
+    if (!mounted) return;
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, refresh) {
-          Widget toneTile(String name, String path) => ListTile(
+          Widget toneTile(String name, String path, {File? upload}) => ListTile(
             leading: IconButton(
               tooltip: 'Preview',
               icon: Icon(
@@ -215,8 +259,25 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
               ),
               onPressed: () => _togglePreview(path, refresh),
             ),
-            title: Text(name),
-            trailing: _audioPath == path ? const Icon(Icons.check) : null,
+            title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_audioPath == path) const Icon(Icons.check),
+                if (upload != null)
+                  IconButton(
+                    tooltip: 'Delete this upload',
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    onPressed: () async {
+                      if (_previewing == path) await _stopPreview();
+                      if (await _deleteUpload(upload)) {
+                        uploads = await _loadUploads();
+                        refresh(() {});
+                      }
+                    },
+                  ),
+              ],
+            ),
             onTap: () {
               setState(() {
                 _audioPath = path;
@@ -245,7 +306,20 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                       children: [
                         for (final tone in _defaultRingtones)
                           toneTile(tone['name']!, tone['path']!),
-                        if (custom) toneTile(_audioName, _audioPath),
+                        // Ringtones uploaded earlier stay available for
+                        // every alarm.
+                        if (uploads.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                            child: Text(
+                              'Your uploads',
+                              style: Theme.of(sheetContext)
+                                  .textTheme
+                                  .titleSmall,
+                            ),
+                          ),
+                        for (final f in uploads)
+                          toneTile(_nameOf(f.path), f.path, upload: f),
                         const Divider(),
                         ListTile(
                           leading: const Padding(

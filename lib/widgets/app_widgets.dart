@@ -221,3 +221,76 @@ class ProgressRing extends StatelessWidget {
     );
   }
 }
+
+/// "Good morning" / "Good afternoon" / "Good evening" for [hour] (0-23).
+String greetingFor(int hour) {
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/// Makes a list item grow and fade in when it appears, and shrink and fade
+/// out when [leaving] turns true ([onGone] is called once it has gone).
+class AppearDisappear extends StatefulWidget {
+  final Widget child;
+  final bool leaving;
+  final VoidCallback? onGone;
+  final bool animateIn;
+  const AppearDisappear({
+    super.key,
+    required this.child,
+    this.leaving = false,
+    this.onGone,
+    this.animateIn = true,
+  });
+
+  @override
+  State<AppearDisappear> createState() => _AppearDisappearState();
+}
+
+class _AppearDisappearState extends State<AppearDisappear>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+    value: widget.animateIn ? 0 : 1,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.leaving) {
+      _leave();
+    } else {
+      _c.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(AppearDisappear old) {
+    super.didUpdateWidget(old);
+    if (widget.leaving && !old.leaving) _leave();
+  }
+
+  void _leave() {
+    _c.reverse().whenComplete(() {
+      if (mounted) widget.onGone?.call();
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final curve = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
+    return SizeTransition(
+      sizeFactor: curve,
+      alignment: Alignment.topCenter,
+      child: FadeTransition(opacity: curve, child: widget.child),
+    );
+  }
+}
