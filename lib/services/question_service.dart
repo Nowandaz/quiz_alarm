@@ -138,9 +138,10 @@ class QuestionService {
   static Future<Question?> nextQuestion(
     List<String> selectors, {
     Set<String> exclude = const {},
+    bool repeat = true,
   }) async {
     final ids = await QuestionRepository.resolveTopicIds(selectors);
-    return QuestionRepository.pickNext(ids, exclude: exclude);
+    return QuestionRepository.pickNext(ids, exclude: exclude, repeat: repeat);
   }
 
   // --------------------------------------------------------------- grading

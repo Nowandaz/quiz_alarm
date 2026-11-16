@@ -23,10 +23,13 @@ class AlarmTab extends StatelessWidget {
   (AlarmItem, DateTime)? _next(AlarmProvider provider) {
     final now = DateTime.now();
     (AlarmItem, DateTime)? best;
-    for (final a in provider.alarms.where((a) => a.isEnabled)) {
-      // A registered time also covers a running snooze.
+    for (final a in provider.alarms) {
+      // A registered time also covers a running snooze, including the
+      // snooze of a ring-once alarm that already shows as off.
       final registered = provider.backend.scheduledTime(a.id);
-      final when = (registered != null && registered.isAfter(now))
+      final pending = registered != null && registered.isAfter(now);
+      if (!a.isEnabled && !pending) continue;
+      final when = pending
           ? registered
           : calculateNextTrigger(a.time, a.activeDays, now);
       if (best == null || when.isBefore(best.$2)) best = (a, when);
@@ -52,9 +55,6 @@ class AlarmTab extends StatelessWidget {
 
     return Consumer<AlarmProvider>(
       builder: (context, provider, child) {
-        final now = DateTime.now();
-        final next = _next(provider);
-
         return Stack(
           children: [
             ListView(
@@ -65,69 +65,75 @@ class AlarmTab extends StatelessWidget {
                 90 + MediaQuery.paddingOf(context).bottom,
               ),
               children: [
-                GlossCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                EveryHalfMinute(
+                  builder: (context) {
+                    final now = DateTime.now();
+                    final next = _next(provider);
+                    return GlossCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Text(
-                              greetingFor(now.hour),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  greetingFor(now.hour),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                  ),
+                                ),
                               ),
-                            ),
+                              Text(
+                                DateFormat('EEE d MMM').format(now),
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
                           ),
-                          Text(
-                            DateFormat('EEE d MMM').format(now),
-                            style: theme.textTheme.bodySmall,
+                          const SizedBox(height: 12),
+                          // Tap to switch between digital and analog.
+                          const ClockDisplay(),
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.07,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  next == null
+                                      ? Icons.notifications_off_rounded
+                                      : Icons.notifications_active_rounded,
+                                  size: 18,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    next == null
+                                        ? 'No alarm is switched on'
+                                        : 'Next alarm '
+                                              '${describeTimeUntil(next.$2, now)} '
+                                              '(${formatClock(next.$2, use24Hour: use24)})',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-                      // Tap to switch between digital and analog.
-                      const ClockDisplay(),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.07,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              next == null
-                                  ? Icons.notifications_off_rounded
-                                  : Icons.notifications_active_rounded,
-                              size: 18,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                next == null
-                                    ? 'No alarm is switched on'
-                                    : 'Next alarm '
-                                          '${describeTimeUntil(next.$2, now)} '
-                                          '(${formatClock(next.$2, use24Hour: use24)})',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 22),
                 Row(

@@ -135,7 +135,9 @@ class AlarmProvider extends ChangeNotifier {
 
     // A "ring once" alarm has now fired: turn it off so it can never
     // be rescheduled for tomorrow.
-    if (matched.activeDays.isEmpty && matched.isEnabled) {
+    if (matched.activeDays.isEmpty &&
+        matched.isEnabled &&
+        !_testRings.contains(matched.id)) {
       matched.isEnabled = false;
       await saveAlarms();
     }
@@ -176,6 +178,7 @@ class AlarmProvider extends ChangeNotifier {
       // Always the loudest the phone can go, whatever its volume is set to.
       volume: 1.0,
       fadeDuration: alarm.fadeDuration,
+      repeating: alarm.activeDays.isNotEmpty,
       title: title ?? name,
       body:
           body ??
@@ -196,9 +199,19 @@ class AlarmProvider extends ChangeNotifier {
     await backend.set(await _request(alarm, next));
   }
 
+  /// Arms [alarm] with the system. A failure is logged, not thrown: the
+  /// alarm list must still be saved and shown.
+  Future<void> _arm(AlarmItem alarm) async {
+    try {
+      await _scheduleNativeAlarm(alarm);
+    } catch (e) {
+      debugPrint('Could not schedule alarm ${alarm.id}: $e');
+    }
+  }
+
   Future<void> addAlarm(AlarmItem alarm) async {
     alarms.add(alarm);
-    await _scheduleNativeAlarm(alarm);
+    await _arm(alarm);
     await saveAlarms();
     unawaited(refillQuestionBank());
   }
@@ -210,7 +223,7 @@ class AlarmProvider extends ChangeNotifier {
     } else {
       alarms.add(alarm);
     }
-    await _scheduleNativeAlarm(alarm);
+    await _arm(alarm);
     await saveAlarms();
     unawaited(refillQuestionBank());
   }
@@ -223,9 +236,14 @@ class AlarmProvider extends ChangeNotifier {
 
   Future<void> dismissAlarm(AlarmItem alarm) async {
     await backend.stop(alarm.id);
+    if (_testRings.remove(alarm.id)) {
+      // A simulator test ring: put the real schedule back untouched.
+      await _arm(alarm);
+      return;
+    }
     // Automatically schedule next occurrence if repeating days are active
     if (alarm.isEnabled && alarm.activeDays.isNotEmpty) {
-      await _scheduleNativeAlarm(alarm);
+      await _arm(alarm);
     } else {
       alarm.isEnabled = false;
       await saveAlarms();
@@ -252,8 +270,12 @@ class AlarmProvider extends ChangeNotifier {
     AlarmItem alarm, {
     Duration after = const Duration(seconds: 3),
   }) async {
+    _testRings.add(alarm.id);
     await backend.set(await _request(alarm, DateTime.now().add(after)));
   }
+
+  // Ids ringing because of [ringSoon], not because their time came.
+  final Set<int> _testRings = {};
 
   Future<void> _loadAlarms() async {
     try {
@@ -284,6 +306,17 @@ class AlarmProvider extends ChangeNotifier {
           if (await backend.isRinging(a.id)) continue;
           final registered = backend.scheduledTime(a.id);
           if (registered != null && registered.isAfter(now)) continue;
+          // Came due in the last two minutes: it is about to sound (or is
+          // sounding without audio yet). Touching it now would cancel it.
+          final due = DateTime(
+            now.year,
+            now.month,
+            now.day,
+            a.time.hour,
+            a.time.minute,
+          );
+          final late = now.difference(due);
+          if (!late.isNegative && late < const Duration(minutes: 2)) continue;
 
           if (a.activeDays.isEmpty) {
             // A "ring once" alarm that is no longer registered has fired

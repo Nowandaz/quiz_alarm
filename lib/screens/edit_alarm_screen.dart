@@ -105,6 +105,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     return 'Next alarm ${describeTimeUntil(next, now)}';
   }
 
+  bool _sameDays(List<int> a, List<int> b) =>
+      a.length == b.length && a.toSet().containsAll(b);
+
   void _saveAlarm() {
     final provider = Provider.of<AlarmProvider>(context, listen: false);
     final label = _labelCtrl.text.trim();
@@ -122,6 +125,13 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       volume: widget.existingAlarm?.volume ?? 1.0,
       requiredStreak: _requiredStreak,
       snoozeMinutes: _snoozeMinutes,
+      // Editing the name or topics of a switched-off alarm must not switch
+      // it on. Changing when it rings does, as in other clock apps.
+      isEnabled:
+          widget.existingAlarm == null ||
+          widget.existingAlarm!.isEnabled ||
+          widget.existingAlarm!.time != _selectedTime ||
+          !_sameDays(widget.existingAlarm!.activeDays, _activeDays),
     );
 
     if (widget.existingAlarm == null) {
@@ -190,6 +200,21 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     }
   }
 
+  /// True if the audio file at [path] can be opened and has a length.
+  Future<bool> _canPlay(String path) async {
+    try {
+      await _previewPlayer
+          .setSource(DeviceFileSource(path))
+          .timeout(const Duration(seconds: 8));
+      final length = await _previewPlayer.getDuration();
+      await _previewPlayer.stop();
+      return length != null && length > Duration.zero;
+    } catch (e) {
+      debugPrint('Audio check failed: $e');
+      return false;
+    }
+  }
+
   Future<void> _pickAudioFile() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.audio);
     if (result == null || result.files.single.path == null) return;
@@ -201,6 +226,20 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       final name = result.files.single.name;
       final dest = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_$name';
       await File(result.files.single.path!).copy(dest);
+      // An alarm with a file the phone cannot play would be silent, so
+      // check it plays before accepting it.
+      if (!await _canPlay(dest)) {
+        await File(dest).delete();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This phone cannot play that file. Try an MP3 or M4A.',
+            ),
+          ),
+        );
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _audioPath = dest;

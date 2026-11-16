@@ -132,6 +132,19 @@ Future<void> showPracticeSetup(
                                     ],
                                   ),
                           ),
+                          if (source == PracticeSource.bank &&
+                              topics.isNotEmpty &&
+                              available > 0 &&
+                              available < count)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Text(
+                                'These topics have $available saved '
+                                'question${available == 1 ? '' : 's'}, so '
+                                'the session will have $available.',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ),
                           label('Questions from'),
                           SegmentedButton<PracticeSource>(
                             showSelectedIcon: false,

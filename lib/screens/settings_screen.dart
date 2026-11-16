@@ -14,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/question_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
+import 'tour_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -189,6 +190,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   secondary: const Icon(Icons.schedule_rounded),
                   value: themeProvider.use24Hour,
                   onChanged: (v) => themeProvider.setUse24Hour(v),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.explore_rounded),
+                  title: const Text('Show the tour'),
+                  subtitle: const Text('The short walk-through of the app.'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      fullscreenDialog: true,
+                      builder: (_) => TourScreen(showPermissions: _android),
+                    ),
+                  ),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 const ListTile(

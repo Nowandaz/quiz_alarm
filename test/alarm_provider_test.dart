@@ -15,6 +15,7 @@ class FakeBackend implements AlarmBackend {
   final Set<int> ringing = {};
   final List<int> setCalls = [];
   final List<int> stopCalls = [];
+  bool failSet = false;
   final StreamController<AlarmRing> controller = StreamController<AlarmRing>();
 
   @override
@@ -25,6 +26,7 @@ class FakeBackend implements AlarmBackend {
   Stream<AlarmRing> get rings => controller.stream;
   @override
   Future<void> set(AlarmRequest request) async {
+    if (failSet) throw StateError('arming failed');
     setCalls.add(request.id);
     ringing.remove(request.id);
     registered[request.id] = request.dateTime;
@@ -159,6 +161,34 @@ void main() {
     expect(await backend.isRinging(5), isFalse);
     expect(backend.scheduledTime(5), isNull);
     await sub.cancel();
+  });
+
+  test('a simulator test ring leaves a ring-once alarm switched on', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(9, days: const []);
+    await provider.addAlarm(a);
+    final real = backend.registered[9]!;
+
+    await provider.ringSoon(a, after: const Duration(milliseconds: 1));
+    backend.controller.add(const AlarmRing(9, 'test'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(a.isEnabled, isTrue);
+
+    await provider.dismissAlarm(a);
+    expect(a.isEnabled, isTrue);
+    expect(backend.registered[9], real); // the real time is back
+  });
+
+  test('a failure to arm an alarm still saves and shows it', () async {
+    await resetApp();
+    final backend = FakeBackend()..failSet = true;
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    await provider.addAlarm(alarm(4));
+    expect(provider.alarms.single.id, 4);
   });
 
   test('difficulty and snooze length are saved; old alarms get defaults', () {

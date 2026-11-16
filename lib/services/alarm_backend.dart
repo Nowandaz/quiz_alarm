@@ -25,6 +25,9 @@ class AlarmRequest {
   final String title;
   final String body;
 
+  /// True for an alarm that repeats on set days.
+  final bool repeating;
+
   const AlarmRequest({
     required this.id,
     required this.dateTime,
@@ -34,6 +37,7 @@ class AlarmRequest {
     this.vibrate = true,
     this.volume = 1.0,
     this.fadeDuration = 0,
+    this.repeating = false,
   });
 }
 
@@ -128,6 +132,16 @@ class NativeAlarmBackend implements AlarmBackend {
         androidStopAlarmOnTermination: false,
         // Turns the screen on and shows the quiz over the lock screen.
         androidFullScreenIntent: true,
+        // Two alarms may share a time, and an alarm that comes due while
+        // another is ringing waits its turn. Without this the plugin
+        // silently drops the second one.
+        allowSameSecondScheduling: true,
+        // A repeating alarm that was missed while the phone was off still
+        // rings when the phone starts (null = never discard): dismissing it
+        // is what schedules the next day, so dropping it would break the
+        // chain. A one-off alarm that is more than 15 minutes late is
+        // dropped instead.
+        androidStaleAfter: r.repeating ? null : const Duration(minutes: 15),
       ),
     );
   }

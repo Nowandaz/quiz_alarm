@@ -15,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import 'alarm_ring_screen.dart';
 import 'settings_screen.dart';
+import 'tour_screen.dart';
 import 'tabs/alarm_tab.dart';
 import 'tabs/question_bank_tab.dart';
 import 'tabs/reports_tab.dart';
@@ -48,8 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<AlarmProvider>(context, listen: false);
-      // The simulator has no OS permissions to ask for.
-      if (!provider.backend.isSimulated) _requestPermissions();
+      _welcome(simulated: provider.backend.isSimulated);
 
       provider.onAlarmTriggered = (alarm) async {
         if (!mounted) {
@@ -76,6 +76,21 @@ class _HomeScreenState extends State<HomeScreen> {
         provider.ringScreenClosed();
       };
     });
+  }
+
+  /// First launch: the walk-through, then the permission questions it
+  /// announces. Later launches go straight to any permission still missing.
+  Future<void> _welcome({required bool simulated}) async {
+    if (await TourScreen.shouldShow() && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => TourScreen(showPermissions: !simulated),
+        ),
+      );
+    }
+    // The simulator has no OS permissions to ask for.
+    if (!simulated && mounted) await _requestPermissions();
   }
 
   Future<void> _requestPermissions() async {
