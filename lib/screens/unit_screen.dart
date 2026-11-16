@@ -134,7 +134,15 @@ class UnitScreen extends StatelessWidget {
 class TopicCard extends StatelessWidget {
   final Topic topic;
   final TopicStats stats;
-  const TopicCard({super.key, required this.topic, required this.stats});
+
+  /// Shown above the topic name in search results.
+  final String? unitName;
+  const TopicCard({
+    super.key,
+    required this.topic,
+    required this.stats,
+    this.unitName,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -160,6 +168,8 @@ class TopicCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (unitName != null)
+                        Text(unitName!, style: theme.textTheme.labelSmall),
                       Text(topic.name, style: theme.textTheme.titleMedium),
                       const SizedBox(height: 3),
                       Text(

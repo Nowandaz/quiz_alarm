@@ -11,24 +11,64 @@ import '../../services/alarm_provider.dart';
 import '../../services/bank_provider.dart';
 import '../../services/theme_provider.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/alarm_health.dart';
 import '../../widgets/app_widgets.dart';
+import '../../widgets/coach_tour.dart';
 import '../../widgets/clock_display.dart';
 import '../alarm_ring_screen.dart';
 import '../edit_alarm_screen.dart';
 
-class AlarmTab extends StatelessWidget {
+class AlarmTab extends StatefulWidget {
   const AlarmTab({super.key});
+
+  @override
+  State<AlarmTab> createState() => _AlarmTabState();
+}
+
+class _AlarmTabState extends State<AlarmTab> {
+  // Alarms ticked for deletion. Long-press an alarm to start selecting.
+  final Set<int> _selected = {};
+
+  void _toggle(int id) => setState(() {
+    if (!_selected.remove(id)) _selected.add(id);
+  });
+
+  Future<void> _deleteSelected(AlarmProvider provider) async {
+    final n = _selected.length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete $n alarm${n == 1 ? '' : 's'}?'),
+        content: const Text('This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final ids = _selected.toList();
+    setState(_selected.clear);
+    await provider.deleteAlarms(ids);
+  }
 
   /// When the soonest enabled alarm will ring, and which one it is.
   (AlarmItem, DateTime)? _next(AlarmProvider provider) {
     final now = DateTime.now();
     (AlarmItem, DateTime)? best;
-    for (final a in provider.alarms.where((a) => a.isEnabled)) {
-      // A registered time also covers a running snooze.
-      final registered = provider.backend.scheduledTime(a.id);
-      final when = (registered != null && registered.isAfter(now))
-          ? registered
-          : calculateNextTrigger(a.time, a.activeDays, now);
+    for (final a in provider.alarms) {
+      // What the phone has registered also covers a running snooze,
+      // including the snooze of a ring-once alarm that already shows as off.
+      final registered = provider.nextRing(a);
+      if (!a.isEnabled && registered == null) continue;
+      final when =
+          registered ?? calculateNextTrigger(a.time, a.activeDays, now);
       if (best == null || when.isBefore(best.$2)) best = (a, when);
     }
     return best;
@@ -52,167 +92,225 @@ class AlarmTab extends StatelessWidget {
 
     return Consumer<AlarmProvider>(
       builder: (context, provider, child) {
-        final now = DateTime.now();
-        final next = _next(provider);
+        _selected.removeWhere((id) => !provider.alarms.any((a) => a.id == id));
+        final selecting = _selected.isNotEmpty;
 
-        return Stack(
-          children: [
-            ListView(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                6,
-                16,
-                90 + MediaQuery.paddingOf(context).bottom,
-              ),
-              children: [
-                GlossCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              greetingFor(now.hour),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            DateFormat('EEE d MMM').format(now),
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      // Tap to switch between digital and analog.
-                      const ClockDisplay(),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.onSurface.withValues(
-                            alpha: 0.07,
-                          ),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
+        return PopScope(
+          // Back leaves selection mode before it leaves the app.
+          canPop: !selecting,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) setState(_selected.clear);
+          },
+          child: Stack(
+            children: [
+              ListView(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  6,
+                  16,
+                  90 + MediaQuery.paddingOf(context).bottom,
+                ),
+                children: [
+                  if (!provider.backend.isSimulated) const AlarmHealthBanner(),
+                  EveryHalfMinute(
+                    key: TourKeys.clock,
+                    builder: (context) {
+                      final now = DateTime.now();
+                      final next = _next(provider);
+                      return GlossCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(
-                              next == null
-                                  ? Icons.notifications_off_rounded
-                                  : Icons.notifications_active_rounded,
-                              size: 18,
-                              color: theme.colorScheme.primary,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                next == null
-                                    ? 'No alarm is switched on'
-                                    : 'Next alarm '
-                                          '${describeTimeUntil(next.$2, now)} '
-                                          '(${formatClock(next.$2, use24Hour: use24)})',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    greetingFor(now.hour),
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 15,
+                                    ),
+                                  ),
                                 ),
+                                Text(
+                                  DateFormat('EEE d MMM').format(now),
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            // Tap to switch between digital and analog.
+                            const ClockDisplay(),
+                            const SizedBox(height: 16),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.onSurface.withValues(
+                                  alpha: 0.07,
+                                ),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    next == null
+                                        ? Icons.notifications_off_rounded
+                                        : Icons.notifications_active_rounded,
+                                    size: 18,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      next == null
+                                          ? 'No alarm is switched on'
+                                          : 'Next alarm '
+                                                '${describeTimeUntil(next.$2, now)}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
-                ),
-                const SizedBox(height: 22),
-                Row(
-                  children: [
-                    Expanded(
+                  const SizedBox(height: 22),
+                  if (selecting)
+                    // Selection bar: how many are ticked, delete, cancel.
+                    Row(
+                      children: [
+                        IconButton(
+                          tooltip: 'Cancel selection',
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () => setState(_selected.clear),
+                        ),
+                        Expanded(
+                          child: Text(
+                            '${_selected.length} selected',
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _selected.addAll(provider.alarms.map((a) => a.id));
+                          }),
+                          child: const Text('All'),
+                        ),
+                        IconButton(
+                          tooltip: 'Delete selected',
+                          icon: Icon(
+                            Icons.delete_outline_rounded,
+                            color: theme.colorScheme.error,
+                          ),
+                          onPressed: () => _deleteSelected(provider),
+                        ),
+                      ],
+                    )
+                  else
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Your alarms',
+                            style: theme.textTheme.titleLarge,
+                          ),
+                        ),
+                        TextButton.icon(
+                          key: TourKeys.testQuiz,
+                          icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                          label: const Text('Test the quiz'),
+                          onPressed: () {
+                            // A preview: it can be closed and does not touch
+                            // any real alarm.
+                            final sample = provider.alarms.isNotEmpty
+                                ? provider.alarms.first
+                                : AlarmItem(
+                                    id: 1,
+                                    time: TimeOfDay.now(),
+                                    topics: const [],
+                                  );
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => AlarmRingScreen(
+                                  alarm: sample,
+                                  preview: true,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  if (provider.backend.isSimulated)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
-                        'Your alarms',
-                        style: theme.textTheme.titleLarge,
+                        'Simulator: alarms ring inside the app. Tap the bell '
+                        'on an alarm to ring it in 3 s.',
+                        style: theme.textTheme.bodySmall,
                       ),
                     ),
-                    TextButton.icon(
-                      icon: const Icon(Icons.play_arrow_rounded, size: 20),
-                      label: const Text('Test the quiz'),
-                      onPressed: () {
-                        // A preview: it can be closed and does not touch
-                        // any real alarm.
-                        final sample = provider.alarms.isNotEmpty
-                            ? provider.alarms.first
-                            : AlarmItem(
-                                id: 1,
-                                time: TimeOfDay.now(),
-                                topics: const [],
-                              );
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                AlarmRingScreen(alarm: sample, preview: true),
-                          ),
-                        );
-                      },
+                  const SizedBox(height: 4),
+                  if (provider.alarms.isEmpty)
+                    _EmptyAlarms(
+                      key: TourKeys.addAlarm,
+                      onAdd: () => _openEditor(context),
                     ),
-                  ],
-                ),
-                if (provider.backend.isSimulated)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Simulator: alarms ring inside the app. Tap the bell '
-                      'on an alarm to ring it in 3 s.',
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                if (provider.alarms.isEmpty)
-                  _EmptyAlarms(onAdd: () => _openEditor(context)),
-                _AlarmList(
-                  alarms: provider.alarms,
-                  itemBuilder: (a) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _AlarmCard(
-                      alarm: a,
-                      topics: bank.describe(a.topics),
-                      use24Hour: use24,
-                      simulated: provider.backend.isSimulated,
-                      onTap: () => _openEditor(context, a),
-                      onToggle: (v) {
-                        a.isEnabled = v;
-                        provider.updateAlarm(a);
-                      },
-                      onRingNow: () {
-                        provider.ringSoon(a);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            duration: Duration(seconds: 2),
-                            content: Text('Ringing in 3 s...'),
-                          ),
-                        );
-                      },
+                  _AlarmList(
+                    alarms: provider.alarms,
+                    itemBuilder: (a) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _AlarmCard(
+                        alarm: a,
+                        topics: bank.describe(a.topics),
+                        use24Hour: use24,
+                        simulated: provider.backend.isSimulated,
+                        selecting: selecting,
+                        selected: _selected.contains(a.id),
+                        onLongPress: () => _toggle(a.id),
+                        onTap: selecting
+                            ? () => _toggle(a.id)
+                            : () => _openEditor(context, a),
+                        onToggle: (v) {
+                          a.isEnabled = v;
+                          provider.updateAlarm(a);
+                        },
+                        onRingNow: () {
+                          provider.ringSoon(a);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              duration: Duration(seconds: 2),
+                              content: Text('Ringing in 3 s...'),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-            if (provider.alarms.isNotEmpty)
-              Positioned(
-                right: 16,
-                // Sits just above the navigation bar on every screen size.
-                bottom: 12 + MediaQuery.paddingOf(context).bottom,
-                child: PrimaryButton(
-                  icon: Icons.add_rounded,
-                  label: 'Add Alarm',
-                  onPressed: () => _openEditor(context),
-                ),
+                ],
               ),
-          ],
+              if (provider.alarms.isNotEmpty && !selecting)
+                Positioned(
+                  right: 16,
+                  // Sits just above the navigation bar on every screen size.
+                  bottom: 12 + MediaQuery.paddingOf(context).bottom,
+                  child: PrimaryButton(
+                    key: TourKeys.addAlarm,
+                    icon: Icons.add_rounded,
+                    label: 'Add Alarm',
+                    onPressed: () => _openEditor(context),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );
@@ -281,7 +379,7 @@ class _AlarmListState extends State<_AlarmList> {
 
 class _EmptyAlarms extends StatelessWidget {
   final VoidCallback onAdd;
-  const _EmptyAlarms({required this.onAdd});
+  const _EmptyAlarms({super.key, required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
@@ -327,10 +425,16 @@ class _AlarmCard extends StatelessWidget {
   final bool use24Hour;
   final bool simulated;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final bool selecting;
+  final bool selected;
   final ValueChanged<bool> onToggle;
   final VoidCallback onRingNow;
 
   const _AlarmCard({
+    required this.onLongPress,
+    required this.selecting,
+    required this.selected,
     required this.alarm,
     required this.topics,
     required this.use24Hour,
@@ -354,8 +458,16 @@ class _AlarmCard extends StatelessWidget {
       opacity: on ? 1 : 0.6,
       child: Card(
         clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
         child: InkWell(
           onTap: onTap,
+          onLongPress: onLongPress,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 14, 10, 14),
             child: Column(
@@ -395,13 +507,28 @@ class _AlarmCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    if (simulated)
-                      IconButton(
-                        tooltip: 'Ring in 3 seconds',
-                        icon: const Icon(Icons.notifications_active_outlined),
-                        onPressed: onRingNow,
-                      ),
-                    Switch(value: on, onChanged: onToggle),
+                    if (selecting)
+                      Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: Icon(
+                          selected
+                              ? Icons.check_circle_rounded
+                              : Icons.radio_button_unchecked_rounded,
+                          color: selected
+                              ? scheme.primary
+                              : scheme.onSurfaceVariant,
+                          size: 28,
+                        ),
+                      )
+                    else ...[
+                      if (simulated)
+                        IconButton(
+                          tooltip: 'Ring in 3 seconds',
+                          icon: const Icon(Icons.notifications_active_outlined),
+                          onPressed: onRingNow,
+                        ),
+                      Switch(value: on, onChanged: onToggle),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 2),

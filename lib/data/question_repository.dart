@@ -91,7 +91,13 @@ class QuestionRepository {
         'INSERT INTO units(id, name, description, sort_order) VALUES(?,?,?,?) '
         'ON CONFLICT(id) DO UPDATE SET name = excluded.name, '
         'description = excluded.description, sort_order = excluded.sort_order',
-        [unitId, unit['name'], unit['description'] ?? '', sortOrder],
+        // "order" in the file wins over the file's position.
+        [
+          unitId,
+          unit['name'],
+          unit['description'] ?? '',
+          (unit['order'] as int?) ?? sortOrder,
+        ],
       );
 
       final keepTopics = <String>[];
@@ -483,11 +489,13 @@ class QuestionRepository {
   /// Picks the next question from [topicIds]. Order of preference:
   /// never answered, then last answered wrong, then answered longest ago.
   /// Questions in [exclude] (already shown this session) are avoided
-  /// while anything else is left. Returns null only if there are no
+  /// while anything else is left; after that they come round again, or
+  /// with [repeat] false the result is null. Returns null only if there are no
   /// questions at all.
   static Future<Question?> pickNext(
     List<String> topicIds, {
     Set<String> exclude = const {},
+    bool repeat = true,
     Random? rng,
   }) async {
     await ensureReady();
@@ -511,7 +519,12 @@ class QuestionRepository {
 
     var pool = rows.where((r) => !exclude.contains(r['id'])).toList();
     // (query results are read-only, hence the copy before sorting below)
-    if (pool.isEmpty) pool = List.of(rows);
+    if (pool.isEmpty) {
+      // Everything was shown already. A practice session ends here; an
+      // alarm ([repeat]) starts over.
+      if (!repeat) return null;
+      pool = List.of(rows);
+    }
 
     final random = rng ?? Random();
     final unseen = pool.where((r) => r['last_at'] == null).toList();

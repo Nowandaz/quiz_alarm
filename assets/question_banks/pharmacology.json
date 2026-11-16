@@ -1,9 +1,10 @@
 {
-  "version": 2,
+  "version": 3,
   "unit": {
     "id": "pharmacology",
     "name": "Pharmacology",
-    "description": "Starter test data. Subtopics and questions will be replaced with the full unit outline."
+    "description": "Starter test data. Subtopics and questions will be replaced with the full unit outline.",
+    "order": 1
   },
   "topics": [
     {

@@ -12,6 +12,7 @@ import '../../models/models.dart';
 import '../../services/question_service.dart';
 import '../../services/theme_provider.dart';
 import '../../widgets/app_widgets.dart';
+import '../../widgets/coach_tour.dart';
 import '../session_screen.dart';
 
 /// "1m 20s", "45s" or "2h 5m".
@@ -92,6 +93,7 @@ class _ReportsTabState extends State<ReportsTab> {
         children: [
           // Headline: overall accuracy.
           GlossCard(
+            key: TourKeys.reportsHero,
             child: Row(
               children: [
                 ProgressRing(

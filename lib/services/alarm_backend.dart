@@ -128,6 +128,15 @@ class NativeAlarmBackend implements AlarmBackend {
         androidStopAlarmOnTermination: false,
         // Turns the screen on and shows the quiz over the lock screen.
         androidFullScreenIntent: true,
+        // Two alarms may share a time, and an alarm that comes due while
+        // another is ringing waits its turn. Without this the plugin
+        // silently drops the second one.
+        allowSameSecondScheduling: true,
+        // An alarm more than 15 minutes late when the phone starts is
+        // dropped rather than rung late. That is safe because every
+        // weekday of a repeating alarm has its own registration (see
+        // AlarmProvider), so a missed day does not affect the others.
+        androidStaleAfter: const Duration(minutes: 15),
       ),
     );
   }

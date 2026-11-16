@@ -1,9 +1,10 @@
 {
-  "version": 1,
+  "version": 2,
   "unit": {
     "id": "pathology",
     "name": "Pathology",
-    "description": "Sample spotter questions. The pictures are placeholder drawings, to be replaced with real photographs."
+    "description": "Sample spotter questions. The pictures are placeholder drawings, to be replaced with real photographs.",
+    "order": 2
   },
   "topics": [
     {

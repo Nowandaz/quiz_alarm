@@ -6,6 +6,7 @@
 // Steps:
 //   tap:Text        tap the button / tab / item whose label contains Text
 //   tapxy:200,300   tap a point (phone is 412 x 892)
+//   hold:200,300    long-press a point
 //   type:Text       type into the focused field
 //   key:Enter       press a key
 //   scroll:600      scroll down by that many pixels (negative = up)
@@ -120,6 +121,13 @@ const { chromium } = require('playwright');
       const [x, y] = arg.split(',').map(Number);
       await page.mouse.click(x, y);
       await page.waitForTimeout(700);
+    } else if (cmd === 'hold') {
+      const [x, y] = arg.split(',').map(Number);
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.waitForTimeout(800);
+      await page.mouse.up();
+      await page.waitForTimeout(500);
     } else if (cmd === 'type') {
       await page.keyboard.type(arg, { delay: 15 });
     } else if (cmd === 'key') {

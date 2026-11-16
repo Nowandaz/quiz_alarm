@@ -43,7 +43,27 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     {'name': 'Siren', 'path': 'assets/sounds/ringtones/siren.mp3'},
     {'name': 'Bell Tower', 'path': 'assets/sounds/ringtones/bell_tower.mp3'},
   ];
-  static const List<double> _fadeOptions = [0.0, 5.0, 10.0, 30.0, 60.0];
+  static const List<double> _fadeOptions = [
+    0.0,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    120.0,
+    150.0,
+    180.0,
+  ];
+
+  /// "30 seconds", "1 minute", "2.5 minutes".
+  static String _fadeLabel(double seconds) {
+    if (seconds == 0) return 'None';
+    if (seconds < 60) return '${seconds.toInt()} seconds';
+    final minutes = seconds / 60;
+    final text = minutes == minutes.roundToDouble()
+        ? '${minutes.toInt()}'
+        : minutes.toStringAsFixed(1);
+    return '$text minute${minutes == 1 ? '' : 's'}';
+  }
 
   late TimeOfDay _selectedTime;
   late final TextEditingController _labelCtrl;
@@ -105,6 +125,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     return 'Next alarm ${describeTimeUntil(next, now)}';
   }
 
+  bool _sameDays(List<int> a, List<int> b) =>
+      a.length == b.length && a.toSet().containsAll(b);
+
   void _saveAlarm() {
     final provider = Provider.of<AlarmProvider>(context, listen: false);
     final label = _labelCtrl.text.trim();
@@ -122,6 +145,13 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       volume: widget.existingAlarm?.volume ?? 1.0,
       requiredStreak: _requiredStreak,
       snoozeMinutes: _snoozeMinutes,
+      // Editing the name or topics of a switched-off alarm must not switch
+      // it on. Changing when it rings does, as in other clock apps.
+      isEnabled:
+          widget.existingAlarm == null ||
+          widget.existingAlarm!.isEnabled ||
+          widget.existingAlarm!.time != _selectedTime ||
+          !_sameDays(widget.existingAlarm!.activeDays, _activeDays),
     );
 
     if (widget.existingAlarm == null) {
@@ -190,6 +220,21 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     }
   }
 
+  /// True if the audio file at [path] can be opened and has a length.
+  Future<bool> _canPlay(String path) async {
+    try {
+      await _previewPlayer
+          .setSource(DeviceFileSource(path))
+          .timeout(const Duration(seconds: 8));
+      final length = await _previewPlayer.getDuration();
+      await _previewPlayer.stop();
+      return length != null && length > Duration.zero;
+    } catch (e) {
+      debugPrint('Audio check failed: $e');
+      return false;
+    }
+  }
+
   Future<void> _pickAudioFile() async {
     final result = await FilePicker.platform.pickFiles(type: FileType.audio);
     if (result == null || result.files.single.path == null) return;
@@ -201,6 +246,20 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       final name = result.files.single.name;
       final dest = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}_$name';
       await File(result.files.single.path!).copy(dest);
+      // An alarm with a file the phone cannot play would be silent, so
+      // check it plays before accepting it.
+      if (!await _canPlay(dest)) {
+        await File(dest).delete();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This phone cannot play that file. Try an MP3 or M4A.',
+            ),
+          ),
+        );
+        return;
+      }
       if (!mounted) return;
       setState(() {
         _audioPath = dest;
@@ -500,30 +559,32 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) {
+        // Scrolls on small screens: there are eight options.
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Fade-in Duration',
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              for (final duration in _fadeOptions)
-                ListTile(
-                  title: Text(
-                    duration == 0 ? 'None' : '${duration.toInt()} seconds',
-                  ),
-                  trailing: _fadeDuration == duration
-                      ? const Icon(Icons.check)
-                      : null,
-                  onTap: () {
-                    setState(() => _fadeDuration = duration);
-                    Navigator.pop(sheetContext);
-                  },
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Fade-in Duration',
+                  style: Theme.of(sheetContext).textTheme.titleLarge,
                 ),
-            ],
+                const SizedBox(height: 8),
+                for (final duration in _fadeOptions)
+                  ListTile(
+                    title: Text(_fadeLabel(duration)),
+                    trailing: _fadeDuration == duration
+                        ? const Icon(Icons.check)
+                        : null,
+                    onTap: () {
+                      setState(() => _fadeDuration = duration);
+                      Navigator.pop(sheetContext);
+                    },
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -688,12 +749,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 const Divider(height: 1, indent: 16),
                 ListTile(
                   title: const Text('Fade-in Sound'),
-                  subtitle: Text(
-                    _fadeDuration == 0
-                        ? 'None'
-                        : '${_fadeDuration.toInt()} seconds',
-                    style: muted,
-                  ),
+                  subtitle: Text(_fadeLabel(_fadeDuration), style: muted),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _showFadePicker,
                 ),

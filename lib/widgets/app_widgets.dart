@@ -2,6 +2,8 @@
 /// button, letter badges, pills and the progress ring.
 library;
 
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../theme/app_theme.dart';
@@ -297,4 +299,35 @@ class _AppearDisappearState extends State<AppearDisappear>
       child: FadeTransition(opacity: curve, child: widget.child),
     );
   }
+}
+
+/// Rebuilds its child every 30 seconds, for text that depends on the
+/// current time ("Next alarm in 7 hours", greetings, today's date).
+class EveryHalfMinute extends StatefulWidget {
+  final WidgetBuilder builder;
+  const EveryHalfMinute({super.key, required this.builder});
+
+  @override
+  State<EveryHalfMinute> createState() => _EveryHalfMinuteState();
+}
+
+class _EveryHalfMinuteState extends State<EveryHalfMinute> {
+  late final Timer _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+    if (mounted) setState(() {});
+  });
+
+  @override
+  void initState() {
+    super.initState();
+    _timer; // start ticking
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context);
 }

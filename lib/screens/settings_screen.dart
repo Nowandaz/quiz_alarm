@@ -191,6 +191,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onChanged: (v) => themeProvider.setUse24Hour(v),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.explore_rounded),
+                  title: const Text('Show the tour'),
+                  subtitle: const Text(
+                    'Points out where everything is, on the real screens.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  // The home screen runs the tour when Settings closes.
+                  onTap: () => Navigator.pop(context, 'tour'),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
                 const ListTile(
                   leading: Icon(Icons.volume_up_rounded),
                   title: Text('Alarm volume'),

@@ -92,7 +92,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _start();
   }
 
-  bool get _limitReached => widget.limit != null && _answered >= widget.limit!;
+  // The session length: the chosen number, lowered if fewer questions
+  // turn out to be available.
+  late int? _limit = widget.limit;
+
+  bool get _limitReached => _limit != null && _answered >= _limit!;
 
   /// True when there is nothing more to ask after the current question.
   bool get _isLast =>
@@ -111,6 +115,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
     final result = await QuestionService.generateFresh(ids, count: wanted);
     if (!mounted) return;
     _fresh.addAll(result.questions);
+    if (widget.source == PracticeSource.ai &&
+        _limit != null &&
+        _fresh.isNotEmpty &&
+        _fresh.length < _limit!) {
+      _limit = _fresh.length; // the AI wrote fewer than asked
+    }
     if (_fresh.isEmpty) {
       setState(() => _prepareError = result.error ?? 'Nothing was written.');
       return;
@@ -133,8 +143,18 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _answerCtrl.clear();
     final q = _fresh.isNotEmpty
         ? _fresh.removeAt(0).shuffled()
-        : await QuestionService.nextQuestion(widget.selectors, exclude: _shown);
+        : await QuestionService.nextQuestion(
+            widget.selectors,
+            exclude: _shown,
+            repeat: false,
+          );
     if (!mounted) return;
+    if (q == null && _answered > 0) {
+      // The selection has run out before the chosen number was reached.
+      _limit = _answered;
+      await _finish();
+      return;
+    }
     setState(() {
       _question = q;
       _userAnswer = '';
@@ -265,9 +285,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
             child: Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Text(
-                widget.limit == null
+                _limit == null
                     ? '$_correct / $_answered'
-                    : '$_answered / ${widget.limit}',
+                    : '$_answered / $_limit',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),

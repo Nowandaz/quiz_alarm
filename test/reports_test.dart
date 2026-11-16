@@ -31,6 +31,26 @@ void main() {
     },
   );
 
+  test('a practice session ends rather than repeating questions', () async {
+    const topic = 'pharm-cns';
+    final all = await QuestionRepository.getQuestions(topic);
+    final shown = all.map((q) => q.id).toSet();
+    expect(
+      await QuestionRepository.pickNext([topic], exclude: shown, repeat: false),
+      isNull,
+    );
+    // An alarm keeps asking.
+    expect(
+      await QuestionRepository.pickNext([topic], exclude: shown),
+      isNotNull,
+    );
+  });
+
+  test('units come in the order their files ask for', () async {
+    final units = await QuestionRepository.getUnits();
+    expect(units.map((u) => u.id).toList(), ['pharmacology', 'pathology']);
+  });
+
   test('sessions keep the answers, timings and outcome', () async {
     final qs = await QuestionRepository.getQuestions('pharm-cns');
     final id = await QuestionRepository.startSession(

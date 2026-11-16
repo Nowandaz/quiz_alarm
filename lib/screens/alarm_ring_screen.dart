@@ -140,15 +140,25 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
     _closing = true;
     if (!widget.preview) {
       final provider = Provider.of<AlarmProvider>(context, listen: false);
-      if (result == 'snooze') {
-        await provider.snoozeAlarm(widget.alarm);
-      } else {
-        await provider.dismissAlarm(widget.alarm);
+      // Whatever goes wrong here, the screen must still close.
+      try {
+        if (result == 'snooze') {
+          await provider.snoozeAlarm(widget.alarm);
+        } else {
+          await provider.dismissAlarm(widget.alarm);
+        }
+      } catch (e) {
+        debugPrint('Stopping the alarm failed: $e');
+        try {
+          await provider.backend.stop(widget.alarm.id);
+        } catch (_) {}
       }
-      await QuestionRepository.endSession(
-        await _session,
-        result == 'snooze' ? 'snoozed' : 'dismissed',
-      );
+      try {
+        await QuestionRepository.endSession(
+          await _session,
+          result == 'snooze' ? 'snoozed' : 'dismissed',
+        );
+      } catch (_) {}
       QuestionService.changes.value++;
     }
     if (!mounted) return;

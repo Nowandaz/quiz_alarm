@@ -117,25 +117,62 @@ class AlarmProvider extends ChangeNotifier {
     }
   }
 
+  // ------------------------------------------------------------------
+  // System registrations.
+  //
+  // One alarm in the list is registered with the phone under several ids
+  // ("slots"), all derived from the alarm's own id:
+  //   id*10 + 0      a ring-once alarm
+  //   id*10 + 1..7   a repeating alarm: one registration per weekday,
+  //                  each at that weekday's next occurrence
+  //   id*10 + 8      a running snooze
+  //   id*10 + 9      a test ring from the simulator
+  // Because every weekday is registered separately, missing one (phone
+  // off, alarm dropped as too late) never stops the other days from
+  // ringing, and nothing has to ring late to keep the schedule alive.
+  // (Versions before this registered the bare id; those are cleaned up.)
+  // ------------------------------------------------------------------
+  static const int _onceSlot = 0;
+  static const int _snoozeSlot = 8;
+  static const int _testSlot = 9;
+
+  int _slotId(AlarmItem a, int slot) => a.id * 10 + slot;
+
+  /// The alarm a system registration belongs to, or null.
+  AlarmItem? _alarmFor(int systemId) {
+    for (final a in alarms) {
+      if (a.id == systemId) return a; // registered by an older version
+    }
+    for (final a in alarms) {
+      if (a.id == systemId ~/ 10) return a;
+    }
+    return null;
+  }
+
+  // Alarm id -> the system ids of it that are ringing right now.
+  final Map<int, Set<int>> _ringingIds = {};
+
   Future<void> _onRing(AlarmRing ring) async {
     // On a cold start the ring event can arrive before storage is read.
     // Wait, so we match the real alarm instead of the generic fallback.
     await loaded;
 
-    final matched = alarms.firstWhere(
-      (a) => a.id == ring.id,
-      orElse: () => AlarmItem(
-        id: ring.id,
-        time: TimeOfDay.now(),
-        topics: const [],
-        activeDays: const [],
-        label: ring.title,
-      ),
-    );
+    final known = _alarmFor(ring.id);
+    final matched =
+        known ??
+        AlarmItem(
+          id: ring.id,
+          time: TimeOfDay.now(),
+          topics: const [],
+          activeDays: const [],
+          label: ring.title,
+        );
+    _ringingIds.putIfAbsent(matched.id, () => {}).add(ring.id);
+    final isTest = known != null && ring.id == _slotId(known, _testSlot);
 
     // A "ring once" alarm has now fired: turn it off so it can never
     // be rescheduled for tomorrow.
-    if (matched.activeDays.isEmpty && matched.isEnabled) {
+    if (matched.activeDays.isEmpty && matched.isEnabled && !isTest) {
       matched.isEnabled = false;
       await saveAlarms();
     }
@@ -160,6 +197,7 @@ class AlarmProvider extends ChangeNotifier {
   Future<AlarmRequest> _request(
     AlarmItem alarm,
     DateTime when, {
+    required int systemId,
     String? title,
     String? body,
   }) async {
@@ -169,7 +207,7 @@ class AlarmProvider extends ChangeNotifier {
       topics = await QuestionRepository.describeSelection(alarm.topics);
     } catch (_) {}
     return AlarmRequest(
-      id: alarm.id,
+      id: systemId,
       dateTime: when,
       audioPath: alarm.audioPath,
       vibrate: alarm.vibrate,
@@ -183,22 +221,113 @@ class AlarmProvider extends ChangeNotifier {
     );
   }
 
-  Future<void> _scheduleNativeAlarm(AlarmItem alarm) async {
-    if (!alarm.isEnabled) {
-      await backend.stop(alarm.id);
-      return;
+  bool _registered(int systemId, DateTime now) {
+    final t = backend.scheduledTime(systemId);
+    return t != null && t.isAfter(now);
+  }
+
+  /// Cancels a registration if there is one. With [keepRinging] a ringing
+  /// one is left alone.
+  Future<void> _cancel(int systemId, {bool keepRinging = false}) async {
+    final ringing = await backend.isRinging(systemId);
+    if (ringing && keepRinging) return;
+    if (ringing || backend.scheduledTime(systemId) != null) {
+      await backend.stop(systemId);
     }
-    final next = calculateNextTrigger(
-      alarm.time,
-      alarm.activeDays,
-      DateTime.now(),
+  }
+
+  /// When [alarm] will next ring according to the phone (including a
+  /// running snooze), or null if nothing is registered.
+  DateTime? nextRing(AlarmItem alarm) {
+    final now = DateTime.now();
+    DateTime? best;
+    for (final id in [
+      alarm.id,
+      for (var s = 0; s <= 8; s++) _slotId(alarm, s),
+    ]) {
+      final t = backend.scheduledTime(id);
+      if (t != null && t.isAfter(now) && (best == null || t.isBefore(best))) {
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  /// Brings the phone's registrations in line with [alarm].
+  ///
+  /// With [onlyMissing] (used when the app starts) registrations that are
+  /// already in place, ringing, or about to sound are left untouched:
+  /// registering again would silence a ringing alarm.
+  Future<void> _scheduleNativeAlarm(
+    AlarmItem alarm, {
+    bool onlyMissing = false,
+    bool atStartup = false,
+  }) async {
+    final now = DateTime.now();
+    final wanted = <int, DateTime>{}; // slot -> when
+    if (alarm.isEnabled) {
+      if (alarm.activeDays.isEmpty) {
+        wanted[_onceSlot] = calculateNextTrigger(alarm.time, const [], now);
+      } else {
+        for (final day in alarm.activeDays.toSet()) {
+          if (day < 1 || day > 7) continue;
+          wanted[day] = calculateNextTrigger(alarm.time, [day], now);
+        }
+      }
+    }
+
+    // Remove what is no longer wanted: days that were unticked, the
+    // ring-once slot, the old-style registration, and (when the alarm is
+    // switched off) a running snooze.
+    await _cancel(alarm.id, keepRinging: onlyMissing);
+    for (var slot = 0; slot <= 7; slot++) {
+      if (!wanted.containsKey(slot)) {
+        await _cancel(_slotId(alarm, slot), keepRinging: onlyMissing);
+      }
+    }
+    if (!alarm.isEnabled) await _cancel(_slotId(alarm, _snoozeSlot));
+
+    final dueToday = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      alarm.time.hour,
+      alarm.time.minute,
     );
-    await backend.set(await _request(alarm, next));
+    final sinceDue = now.difference(dueToday);
+    final justDue =
+        !sinceDue.isNegative && sinceDue < const Duration(minutes: 2);
+
+    for (final entry in wanted.entries) {
+      final id = _slotId(alarm, entry.key);
+      if (onlyMissing) {
+        if (await backend.isRinging(id)) continue;
+        if (_registered(id, now)) continue;
+        // At app start: came due in the last two minutes, so it is about
+        // to sound. (After a dismissal the same slot must be re-armed.)
+        if (atStartup &&
+            justDue &&
+            (entry.key == _onceSlot || entry.key == now.weekday)) {
+          continue;
+        }
+      }
+      await backend.set(await _request(alarm, entry.value, systemId: id));
+    }
+  }
+
+  /// Arms [alarm] with the system. A failure is logged, not thrown: the
+  /// alarm list must still be saved and shown.
+  Future<void> _arm(AlarmItem alarm, {bool onlyMissing = false}) async {
+    try {
+      await _scheduleNativeAlarm(alarm, onlyMissing: onlyMissing);
+    } catch (e) {
+      debugPrint('Could not schedule alarm ${alarm.id}: $e');
+    }
   }
 
   Future<void> addAlarm(AlarmItem alarm) async {
     alarms.add(alarm);
-    await _scheduleNativeAlarm(alarm);
+    await _arm(alarm);
     await saveAlarms();
     unawaited(refillQuestionBank());
   }
@@ -210,22 +339,62 @@ class AlarmProvider extends ChangeNotifier {
     } else {
       alarms.add(alarm);
     }
-    await _scheduleNativeAlarm(alarm);
+    await _arm(alarm);
     await saveAlarms();
     unawaited(refillQuestionBank());
   }
 
-  Future<void> deleteAlarm(int id) async {
-    alarms.removeWhere((a) => a.id == id);
-    await backend.stop(id);
+  Future<void> deleteAlarm(int id) => deleteAlarms([id]);
+
+  /// Deletes several alarms at once (multi-select on the Alarms tab).
+  Future<void> deleteAlarms(Iterable<int> ids) async {
+    final wanted = ids.toSet();
+    final gone = alarms.where((a) => wanted.contains(a.id)).toList();
+    alarms.removeWhere((a) => wanted.contains(a.id));
+    for (final a in gone) {
+      try {
+        await _cancel(a.id);
+        for (var slot = 0; slot <= 9; slot++) {
+          await _cancel(_slotId(a, slot));
+        }
+      } catch (e) {
+        debugPrint('Could not cancel alarm ${a.id}: $e');
+      }
+      _ringingIds.remove(a.id);
+    }
     await saveAlarms();
   }
 
+  /// Silences whatever of [alarm] is ringing. Returns the system ids that
+  /// were ringing.
+  Future<Set<int>> _silence(AlarmItem alarm) async {
+    final ringing = _ringingIds.remove(alarm.id) ?? <int>{};
+    if (ringing.isEmpty && alarms.any((a) => a.id == alarm.id)) {
+      // Not told which registration rang (should not happen): find it.
+      for (final id in [
+        alarm.id,
+        for (var s = 0; s <= 9; s++) _slotId(alarm, s),
+      ]) {
+        if (await backend.isRinging(id)) ringing.add(id);
+      }
+    }
+    if (ringing.isEmpty) ringing.add(alarm.id);
+    for (final id in ringing) {
+      await backend.stop(id);
+    }
+    return ringing;
+  }
+
   Future<void> dismissAlarm(AlarmItem alarm) async {
-    await backend.stop(alarm.id);
-    // Automatically schedule next occurrence if repeating days are active
-    if (alarm.isEnabled && alarm.activeDays.isNotEmpty) {
-      await _scheduleNativeAlarm(alarm);
+    final inList = alarms.any((a) => a.id == alarm.id);
+    final ringing = await _silence(alarm);
+    if (inList && ringing.every((id) => id == _slotId(alarm, _testSlot))) {
+      return; // a simulator test ring: the real schedule was never touched
+    }
+    if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
+      // Registers the weekday that just rang for next week; the other
+      // days are already in place.
+      await _arm(alarm, onlyMissing: true);
     } else {
       alarm.isEnabled = false;
       await saveAlarms();
@@ -235,24 +404,37 @@ class AlarmProvider extends ChangeNotifier {
 
   /// Silences [alarm] and rings it again after its own snooze length.
   Future<void> snoozeAlarm(AlarmItem alarm) async {
+    final inList = alarms.any((a) => a.id == alarm.id);
+    final ringing = await _silence(alarm);
+    if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
+      await _arm(alarm, onlyMissing: true); // next week's ring of this day
+    }
     await backend.set(
       await _request(
         alarm,
         DateTime.now().add(Duration(minutes: alarm.snoozeMinutes)),
+        systemId: inList ? _slotId(alarm, _snoozeSlot) : ringing.first,
         title: '${alarm.label} (Snoozed)',
         body:
             'Snooze ended! Answer ${alarm.requiredStreak} in a row to dismiss.',
       ),
     );
+    notifyListeners();
   }
 
-  /// Makes [alarm] ring [after] from now without changing its schedule
-  /// permanently (used by the simulator's "Ring now" button).
+  /// Makes [alarm] ring [after] from now without touching its schedule
+  /// (used by the simulator's "Ring now" button).
   Future<void> ringSoon(
     AlarmItem alarm, {
     Duration after = const Duration(seconds: 3),
   }) async {
-    await backend.set(await _request(alarm, DateTime.now().add(after)));
+    await backend.set(
+      await _request(
+        alarm,
+        DateTime.now().add(after),
+        systemId: _slotId(alarm, _testSlot),
+      ),
+    );
   }
 
   Future<void> _loadAlarms() async {
@@ -279,20 +461,35 @@ class AlarmProvider extends ChangeNotifier {
       final now = DateTime.now();
       for (final a in alarms.where((a) => a.isEnabled)) {
         try {
-          // Registering an alarm again silences it if it is ringing and
-          // wipes a pending snooze, so leave those two cases alone.
-          if (await backend.isRinging(a.id)) continue;
-          final registered = backend.scheduledTime(a.id);
-          if (registered != null && registered.isAfter(now)) continue;
-
           if (a.activeDays.isEmpty) {
-            // A "ring once" alarm that is no longer registered has fired
-            // or was missed. Rescheduling would push it to tomorrow.
-            a.isEnabled = false;
-            changed = true;
-          } else {
-            await _scheduleNativeAlarm(a);
+            // A "ring once" alarm that is neither registered, ringing nor
+            // about to sound has fired or was missed. Registering it again
+            // would push it to tomorrow, so switch it off instead.
+            final once = _slotId(a, _onceSlot);
+            final due = DateTime(
+              now.year,
+              now.month,
+              now.day,
+              a.time.hour,
+              a.time.minute,
+            );
+            final late = now.difference(due);
+            final alive =
+                _registered(once, now) ||
+                _registered(a.id, now) ||
+                await backend.isRinging(once) ||
+                await backend.isRinging(a.id) ||
+                (!late.isNegative && late < const Duration(minutes: 2));
+            if (!alive) {
+              a.isEnabled = false;
+              changed = true;
+              continue;
+            }
           }
+          // Fills in whatever is missing (a weekday that was dropped while
+          // the phone was off, or everything after an app update) without
+          // disturbing a ringing alarm or a snooze.
+          await _scheduleNativeAlarm(a, onlyMissing: true, atStartup: true);
         } catch (err) {
           debugPrint('Could not restore alarm ${a.id}: $err');
         }
