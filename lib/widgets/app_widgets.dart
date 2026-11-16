@@ -222,11 +222,15 @@ class ProgressRing extends StatelessWidget {
   }
 }
 
-/// "Good morning" / "Good afternoon" / "Good evening" for [hour] (0-23).
-String greetingFor(int hour) {
+/// Greeting for [hour] (0-23): good morning / afternoon / evening / night,
+/// and between midnight and 5 AM "night owl" or, when [waking] (an alarm
+/// was just dismissed), "early bird".
+String greetingFor(int hour, {bool waking = false}) {
+  if (hour < 5) return waking ? 'Hello, early bird' : 'Hello, night owl';
   if (hour < 12) return 'Good morning';
   if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 21) return 'Good evening';
+  return 'Good night';
 }
 
 /// Makes a list item grow and fade in when it appears, and shrink and fade

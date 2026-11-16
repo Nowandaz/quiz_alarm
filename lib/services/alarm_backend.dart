@@ -117,6 +117,9 @@ class NativeAlarmBackend implements AlarmBackend {
         notificationSettings: NotificationSettings(
           title: r.title,
           body: r.body,
+          // Swiping the notification away must NOT stop the alarm; only
+          // the quiz can. (The plugin puts the notification back.)
+          androidStopAlarmOnDismiss: false,
         ),
         // Android alarms keep working after the app is swiped away, so
         // only iOS (where they do not) shows the "may not ring" warning.

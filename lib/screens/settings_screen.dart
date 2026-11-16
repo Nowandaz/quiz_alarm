@@ -7,7 +7,12 @@ import 'package:provider/provider.dart';
 
 import '../services/alarm_provider.dart';
 import '../services/gemini_client.dart';
+
+import 'package:flutter/foundation.dart';
+import 'package:permission_handler/permission_handler.dart';
+
 import '../services/question_service.dart';
+import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -23,6 +28,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _generating = false;
   String? _lastStatus;
 
+  // Android switches that let an alarm open the quiz by itself.
+  bool _fullScreenOk = true;
+  bool _overlayOk = true;
+  bool get _android =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   @override
   void initState() {
     super.initState();
@@ -33,6 +44,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (mounted) _modelController.text = m;
     });
     _loadStatus();
+    _loadAlarmAccess();
+  }
+
+  Future<void> _loadAlarmAccess() async {
+    if (!_android) return;
+    try {
+      final full = await SystemBridge.canUseFullScreenIntent();
+      final overlay = await Permission.systemAlertWindow.isGranted;
+      if (mounted) {
+        setState(() {
+          _fullScreenOk = full;
+          _overlayOk = overlay;
+        });
+      }
+    } catch (e) {
+      debugPrint('Could not read alarm permissions: $e');
+    }
   }
 
   Future<void> _loadStatus() async {
@@ -171,6 +199,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'alarm rings and put back when you dismiss it.',
                   ),
                 ),
+                if (_android) ...[
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  ListTile(
+                    leading: const Icon(Icons.fullscreen_rounded),
+                    title: const Text('Show quiz over the lock screen'),
+                    subtitle: Text(
+                      _fullScreenOk
+                          ? 'Allowed. An alarm wakes the screen and opens '
+                                'the questions.'
+                          : 'Not allowed: alarms only show a notification. '
+                                'Tap to allow "Full screen notifications".',
+                    ),
+                    trailing: Icon(
+                      _fullScreenOk
+                          ? Icons.check_circle_rounded
+                          : Icons.error_outline_rounded,
+                    ),
+                    onTap: () async {
+                      await SystemBridge.openFullScreenIntentSettings();
+                      await Future<void>.delayed(const Duration(seconds: 1));
+                      _loadAlarmAccess();
+                    },
+                  ),
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  ListTile(
+                    leading: const Icon(Icons.layers_rounded),
+                    title: const Text('Open over other apps'),
+                    subtitle: Text(
+                      _overlayOk
+                          ? 'Allowed. The quiz comes to the front if an '
+                                'alarm rings while you use another app.'
+                          : 'Not allowed. Tap to allow "Display over other '
+                                'apps".',
+                    ),
+                    trailing: Icon(
+                      _overlayOk
+                          ? Icons.check_circle_rounded
+                          : Icons.error_outline_rounded,
+                    ),
+                    onTap: () async {
+                      await Permission.systemAlertWindow.request();
+                      _loadAlarmAccess();
+                    },
+                  ),
+                ],
               ],
             ),
           ),

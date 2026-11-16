@@ -7,6 +7,7 @@ import 'package:quiz_alarm/services/alarm_provider.dart';
 import 'package:quiz_alarm/services/gemini_client.dart';
 import 'package:quiz_alarm/services/question_service.dart';
 import 'package:quiz_alarm/services/theme_provider.dart';
+import 'package:quiz_alarm/widgets/app_widgets.dart';
 
 void main() {
   group('calculateNextTrigger', () {
@@ -66,6 +67,15 @@ void main() {
       formatTimeOfDay(const TimeOfDay(hour: 0, minute: 30), use24Hour: false),
       '12:30 AM',
     );
+  });
+
+  test('greetings follow the time of day', () {
+    expect(greetingFor(2), 'Hello, night owl');
+    expect(greetingFor(2, waking: true), 'Hello, early bird');
+    expect(greetingFor(7), 'Good morning');
+    expect(greetingFor(13), 'Good afternoon');
+    expect(greetingFor(18), 'Good evening');
+    expect(greetingFor(22), 'Good night');
   });
 
   group('describeTimeUntil', () {

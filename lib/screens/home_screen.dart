@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/alarm_provider.dart';
+import '../services/system_bridge.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import 'alarm_ring_screen.dart';
@@ -55,6 +56,13 @@ class _HomeScreenState extends State<HomeScreen> {
           provider.ringScreenClosed();
           return;
         }
+        // If the app is in the background, come to the screen so the quiz
+        // shows without the notification having to be tapped.
+        if (!provider.backend.isSimulated &&
+            WidgetsBinding.instance.lifecycleState !=
+                AppLifecycleState.resumed) {
+          SystemBridge.bringToFront();
+        }
         final result = await Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => AlarmRingScreen(alarm: alarm)),
         );
@@ -91,9 +99,63 @@ class _HomeScreenState extends State<HomeScreen> {
           await Permission.ignoreBatteryOptimizations.request();
         }
       }
+
+      // 4. Opening the quiz by itself when an alarm rings. Two system
+      // switches control that; explain each once before sending the user
+      // to it. Both can be changed later from Settings.
+      if (!mounted) return;
+      if (!(prefs.getBool('asked_full_screen') ?? false) &&
+          !await SystemBridge.canUseFullScreenIntent()) {
+        await prefs.setBool('asked_full_screen', true);
+        if (mounted &&
+            await _explain(
+              'Show the quiz when an alarm rings',
+              'So an alarm can wake the screen and open the questions by '
+                  'itself, allow "Full screen notifications" for BrainWake '
+                  'on the next page.',
+            )) {
+          await SystemBridge.openFullScreenIntentSettings();
+        }
+      }
+      if (!mounted) return;
+      if (!(prefs.getBool('asked_overlay') ?? false) &&
+          !await Permission.systemAlertWindow.isGranted) {
+        await prefs.setBool('asked_overlay', true);
+        if (mounted &&
+            await _explain(
+              'Open over other apps',
+              'If an alarm rings while you are using another app, BrainWake '
+                  'can come to the front with the questions. For that, allow '
+                  '"Display over other apps" on the next page.',
+            )) {
+          await Permission.systemAlertWindow.request();
+        }
+      }
     } catch (e) {
       debugPrint('Permission request failed: $e');
     }
+  }
+
+  /// Explains a permission before the system page opens. True = go on.
+  Future<bool> _explain(String title, String body) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(body),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   @override
