@@ -463,7 +463,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ),
             const SizedBox(height: 20),
             Text(
-              '${greetingFor(now.hour)}!',
+              '${greetingFor(now.hour, waking: true)}!',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontFamily: AppTheme.display,

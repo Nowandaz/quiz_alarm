@@ -4,7 +4,6 @@ library;
 import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
-import 'package:cupertino_ui/cupertino_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
@@ -14,7 +13,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../services/alarm_provider.dart';
 import '../services/bank_provider.dart';
-import '../theme/app_theme.dart';
+import '../widgets/time_wheel.dart';
 import '../widgets/topic_picker.dart';
 
 class EditAlarmScreen extends StatefulWidget {
@@ -73,7 +72,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     _audioPath = a?.audioPath ?? 'assets/sounds/alarm.mp3';
     _audioName = _nameOf(_audioPath);
     _vibrate = a?.vibrate ?? true;
-    _fadeDuration = a?.fadeDuration ?? 5.0;
+    _fadeDuration = a?.fadeDuration ?? 30.0; // new alarms fade in gently
     _requiredStreak = a?.requiredStreak ?? 2;
     _snoozeMinutes = a?.snoozeMinutes ?? 5;
 
@@ -579,30 +578,10 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
               color: cardColor,
               borderRadius: BorderRadius.circular(20),
             ),
-            child: CupertinoTheme(
-              data: CupertinoThemeData(
-                brightness: theme.brightness,
-                textTheme: CupertinoTextThemeData(
-                  dateTimePickerTextStyle: TextStyle(
-                    color: scheme.onSurface,
-                    fontSize: 26,
-                    fontFamily: AppTheme.display,
-                  ),
-                ),
-              ),
-              child: CupertinoDatePicker(
-                mode: CupertinoDatePickerMode.time,
-                use24hFormat: MediaQuery.of(context).alwaysUse24HourFormat,
-                initialDateTime: DateTime(
-                  2020,
-                  1,
-                  1,
-                  _selectedTime.hour,
-                  _selectedTime.minute,
-                ),
-                onDateTimeChanged: (dt) =>
-                    setState(() => _selectedTime = TimeOfDay.fromDateTime(dt)),
-              ),
+            child: TimeWheel(
+              initial: _selectedTime,
+              use24Hour: MediaQuery.of(context).alwaysUse24HourFormat,
+              onChanged: (t) => setState(() => _selectedTime = t),
             ),
           ),
           const SizedBox(height: 20),
