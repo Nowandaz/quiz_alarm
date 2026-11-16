@@ -32,8 +32,23 @@ class QuestionRepository {
 
   static Future<Database> get _db => AppDatabase.instance;
 
+  /// Called when the user's own data changed (an answer, a finished
+  /// session, a new question of theirs), so it can be sent to the server.
+  static void Function()? onLocalChange;
+
+  /// Set (in the meta table) once the bank was downloaded from the
+  /// server. From then on the server is the source and the files bundled
+  /// with the app are no longer imported.
+  static const String bankSyncedKey = 'bank_synced_at';
+
   static Future<void> _init() async {
-    await _db;
+    final db = await _db;
+    final synced = await db.query(
+      'meta',
+      where: 'key = ?',
+      whereArgs: [bankSyncedKey],
+    );
+    if (synced.isNotEmpty) return;
     try {
       final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
       final files =
@@ -408,13 +423,14 @@ class QuestionRepository {
       where: 'id = ?',
       whereArgs: [q.id],
     );
+    if (stored.isNotEmpty && q.source != 'seed') onLocalChange?.call();
     return stored.isNotEmpty;
   }
 
   static Future<void> setExplanation(String questionId, String text) async {
     await (await _db).update(
       'questions',
-      {'explanation': text.trim()},
+      {'explanation': text.trim(), 'synced': 0},
       where: 'id = ?',
       whereArgs: [questionId],
     );
@@ -446,6 +462,7 @@ class QuestionRepository {
         'user_answer': userAnswer.trim(),
         'duration_ms': timeTaken?.inMilliseconds,
       });
+      onLocalChange?.call();
     } catch (e) {
       debugPrint('Could not record the answer: $e');
     }
@@ -585,10 +602,15 @@ class QuestionRepository {
       }
       await db.update(
         'sessions',
-        {'ended_at': DateTime.now().millisecondsSinceEpoch, 'outcome': outcome},
+        {
+          'ended_at': DateTime.now().millisecondsSinceEpoch,
+          'outcome': outcome,
+          'synced': 0,
+        },
         where: 'id = ?',
         whereArgs: [id],
       );
+      onLocalChange?.call();
     } catch (e) {
       debugPrint('Could not close the session: $e');
     }

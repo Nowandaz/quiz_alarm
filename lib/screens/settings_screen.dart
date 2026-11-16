@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/question_service.dart';
+import '../services/sync_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 import 'account_screen.dart';
@@ -261,7 +262,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 4),
           Text(
             'Alarms and the built-in questions work without an account. '
-            'Signing in turns on the AI: new questions and the tutor.',
+            'Signing in keeps your progress safe and turns on the AI.',
             style: small,
           ),
           const SizedBox(height: 8),
@@ -284,6 +285,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: SyncService.running,
+                        builder: (context, running, _) => ListTile(
+                          leading: const Icon(Icons.sync_rounded),
+                          title: const Text('Sync now'),
+                          subtitle: ValueListenableBuilder<String?>(
+                            valueListenable: SyncService.status,
+                            builder: (context, status, _) => Text(
+                              running
+                                  ? 'Syncing...'
+                                  : status ??
+                                        'Your progress and the question bank '
+                                            'sync by themselves.',
+                            ),
+                          ),
+                          onTap: running ? null : () => SyncService.run(),
+                        ),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
                       ListTile(
                         leading: const Icon(Icons.logout_rounded),
                         title: const Text('Sign out'),
@@ -294,7 +314,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 : ListTile(
                     leading: const Icon(Icons.account_circle_outlined),
                     title: const Text('Sign in or create an account'),
-                    subtitle: const Text('Free. Needed for AI features.'),
+                    subtitle: const Text(
+                      'Free. Syncs your progress, turns on the AI.',
+                    ),
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: _openAccount,
                   ),

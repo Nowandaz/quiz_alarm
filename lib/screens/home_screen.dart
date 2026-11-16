@@ -13,6 +13,8 @@ import '../services/alarm_provider.dart';
 import '../services/system_bridge.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../services/account.dart';
+import 'account_screen.dart';
 import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
 import 'settings_screen.dart';
@@ -81,6 +83,21 @@ class _HomeScreenState extends State<HomeScreen> {
   /// First launch: offer the tour, then ask for the permissions alarms
   /// need. Later launches only ask for permissions not yet dealt with.
   Future<void> _welcome({required bool simulated}) async {
+    // A brand-new install starts with the sign-in screen (it can be
+    // skipped), then the tour.
+    final firstPrefs = await SharedPreferences.getInstance();
+    if (!(firstPrefs.getBool('welcome_seen') ?? false)) {
+      await firstPrefs.setBool('welcome_seen', true);
+      if (!Account.instance.isSignedIn && mounted) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute<void>(
+            fullscreenDialog: true,
+            builder: (_) => const AccountScreen(welcome: true),
+          ),
+        );
+      }
+    }
     if (await AppTour.shouldShow() && mounted) {
       await AppTour.markSeen();
       if (!mounted) return;

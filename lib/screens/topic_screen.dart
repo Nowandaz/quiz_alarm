@@ -288,7 +288,7 @@ class _TopicScreenState extends State<TopicScreen> {
                               : q.explanation,
                           style: const TextStyle(height: 1.4),
                         ),
-                        if (q.source != 'seed')
+                        if (q.source != 'seed' && q.source != 'server')
                           Align(
                             alignment: Alignment.centerRight,
                             child: TextButton.icon(

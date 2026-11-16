@@ -1,12 +1,17 @@
-/// Sign in or create an account (email and password).
+/// Sign in or create an account: email and password, or Google.
+/// With [welcome] it is the first screen of a new install and can be
+/// skipped; the app's alarms work without an account.
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../services/account.dart';
+import '../services/system_bridge.dart';
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key});
+  final bool welcome;
+  const AccountScreen({super.key, this.welcome = false});
   @override
   State<AccountScreen> createState() => _AccountScreenState();
 }
@@ -14,17 +19,57 @@ class AccountScreen extends StatefulWidget {
 class _AccountScreenState extends State<AccountScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
-  bool _creating = false;
+  late bool _creating = widget.welcome;
   bool _busy = false;
   bool _showPassword = false;
   String? _error;
   String? _notice;
 
+  // Google sign-in goes through the phone's browser.
+  bool get _googleAvailable =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  @override
+  void initState() {
+    super.initState();
+    Account.instance.addListener(_onAccount);
+    Account.instance.oauthError.value = null;
+    Account.instance.oauthError.addListener(_onGoogleResult);
+  }
+
   @override
   void dispose() {
+    Account.instance.removeListener(_onAccount);
+    Account.instance.oauthError.removeListener(_onGoogleResult);
     _email.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  /// Signed in (by either route): this screen is done.
+  void _onAccount() {
+    if (Account.instance.isSignedIn && mounted) Navigator.pop(context);
+  }
+
+  void _onGoogleResult() {
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = Account.instance.oauthError.value;
+    });
+  }
+
+  Future<void> _google() async {
+    setState(() {
+      _error = null;
+      _notice = null;
+    });
+    final opened = await SystemBridge.openUrl(
+      await Account.instance.googleSignInUrl(),
+    );
+    if (!opened && mounted) {
+      setState(() => _error = 'Could not open the browser for Google sign-in.');
+    }
   }
 
   Future<void> _submit() async {
@@ -54,12 +99,8 @@ class _AccountScreenState extends State<AccountScreen> {
     } else {
       error = await Account.instance.signIn(email, password);
     }
+    // On success _onAccount has already closed this screen.
     if (!mounted) return;
-
-    if (error == null && !needsConfirmation) {
-      Navigator.pop(context);
-      return;
-    }
     setState(() {
       _busy = false;
       _error = error;
@@ -75,8 +116,16 @@ class _AccountScreenState extends State<AccountScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final title = widget.welcome
+        ? 'Welcome to BrainWake'
+        : _creating
+        ? 'Create account'
+        : 'Sign in';
     return Scaffold(
-      appBar: AppBar(title: Text(_creating ? 'Create account' : 'Sign in')),
+      appBar: AppBar(
+        automaticallyImplyLeading: !widget.welcome,
+        title: Text(title),
+      ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(
           20,
@@ -86,13 +135,38 @@ class _AccountScreenState extends State<AccountScreen> {
         ),
         children: [
           Text(
-            _creating
-                ? 'An account turns on the AI: new questions written for '
-                      'you and a tutor that explains your answers.'
-                : 'Sign in to use the AI on this phone.',
+            widget.welcome
+                ? 'The alarm you can only stop by answering revision '
+                      'questions. ${_creating ? 'Create an account' : 'Sign in'} '
+                      'to keep your progress safe and to get new questions '
+                      'and explanations from the AI.'
+                : _creating
+                ? 'An account keeps your progress safe and turns on the AI: '
+                      'new questions written for you and a tutor that '
+                      'explains your answers.'
+                : 'Sign in to sync your progress and use the AI on this phone.',
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 20),
+          if (_googleAvailable) ...[
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _google,
+              icon: const Icon(Icons.public_rounded),
+              label: const Text('Continue with Google'),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Expanded(child: Divider()),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('or', style: theme.textTheme.bodySmall),
+                ),
+                const Expanded(child: Divider()),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
           TextField(
             controller: _email,
             keyboardType: TextInputType.emailAddress,
@@ -153,6 +227,11 @@ class _AccountScreenState extends State<AccountScreen> {
                   : 'New here? Create an account',
             ),
           ),
+          if (widget.welcome)
+            TextButton(
+              onPressed: _busy ? null : () => Navigator.pop(context),
+              child: const Text('Skip for now'),
+            ),
         ],
       ),
     );

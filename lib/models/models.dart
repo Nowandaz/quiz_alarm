@@ -77,7 +77,8 @@ class Question {
   /// Why the answer is right. Stored so explanations work offline.
   final String explanation;
 
-  /// Where the question came from: 'seed', 'ai' or 'user'.
+  /// Where the question came from: 'seed' (bundled with the app),
+  /// 'server' (downloaded bank), 'ai' or 'user'.
   final String source;
 
   const Question({

@@ -40,6 +40,21 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- The browser returns here after Google sign-in; it passes the
+             link to the app and closes (see AuthRedirectActivity.kt). -->
+        <activity
+            android:name=".AuthRedirectActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="brainwake" android:host="auth"/>
+            </intent-filter>
+        </activity>
         <!-- Shows the "alarm may not ring" notice if the app is force-closed
              (alarm plugin, enableNotificationOnKill). -->
         <service android:name="com.gdelataillade.alarm.services.NotificationOnKillService" />

@@ -8,7 +8,9 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -31,6 +33,11 @@ class Account extends ChangeNotifier {
   static final Account instance = Account._();
 
   static const String _storageKey = 'account_session';
+  static const String _verifierKey = 'account_oauth_verifier';
+
+  /// Where the browser sends the user back after Google sign-in (the
+  /// Android app claims this address in its manifest).
+  static const String oauthRedirect = 'brainwake://auth';
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
 
   /// Tests replace this with a fake.
@@ -43,6 +50,9 @@ class Account extends ChangeNotifier {
   String? _refreshToken;
   DateTime _expiresAt = DateTime.fromMillisecondsSinceEpoch(0);
   Future<String?>? _refreshing;
+
+  /// Why the last Google sign-in failed, for the sign-in screen to show.
+  final ValueNotifier<String?> oauthError = ValueNotifier<String?>(null);
 
   bool get isSignedIn => _refreshToken != null;
   String? get email => _email;
@@ -216,6 +226,65 @@ class Account extends ChangeNotifier {
       return const SignUpResult(needsConfirmation: true);
     } catch (e) {
       return SignUpResult(error: _network(e));
+    }
+  }
+
+  /// The web address that starts Google sign-in in the browser. A secret
+  /// made here is kept on the phone and later proves that the reply
+  /// belongs to this request (PKCE).
+  Future<String> googleSignInUrl({Random? random}) async {
+    final rng = random ?? Random.secure();
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    final verifier = List.generate(
+      64,
+      (_) => chars[rng.nextInt(chars.length)],
+    ).join();
+    await _secure.write(key: _verifierKey, value: verifier);
+    final challenge = base64Url
+        .encode(sha256.convert(ascii.encode(verifier)).bytes)
+        .replaceAll('=', '');
+    return Uri.parse('${ServerConfig.supabaseUrl}/auth/v1/authorize')
+        .replace(
+          queryParameters: {
+            'provider': 'google',
+            'redirect_to': oauthRedirect,
+            'code_challenge': challenge,
+            'code_challenge_method': 's256',
+          },
+        )
+        .toString();
+  }
+
+  /// Finishes Google sign-in with the link the browser came back with.
+  /// Returns null on success, otherwise a sentence to show.
+  Future<String?> completeOAuth(Uri link) async {
+    final params = {
+      ...link.queryParameters,
+      if (link.fragment.contains('=')) ...Uri.splitQueryString(link.fragment),
+    };
+    final code = params['code'];
+    if (code == null || code.isEmpty) {
+      final reason = params['error_description'] ?? params['error'];
+      return reason == null
+          ? 'Google sign-in was cancelled.'
+          : 'Google sign-in failed: ${reason.replaceAll('+', ' ')}';
+    }
+    try {
+      final verifier = await _secure.read(key: _verifierKey);
+      if (verifier == null) {
+        return 'Google sign-in was started somewhere else. Try again.';
+      }
+      final res = await _post('/token?grant_type=pkce', {
+        'auth_code': code,
+        'code_verifier': verifier,
+      });
+      if (res.statusCode != 200) return _reason(res);
+      await _secure.delete(key: _verifierKey);
+      await _adopt(jsonDecode(utf8.decode(res.bodyBytes)));
+      return null;
+    } catch (e) {
+      return _network(e);
     }
   }
 

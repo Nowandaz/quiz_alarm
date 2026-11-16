@@ -1,6 +1,7 @@
 // Signing in and out, and the calls to the AI server.
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -139,6 +140,52 @@ void main() {
     expect(paths.last, '/auth/v1/logout');
     account.resetForTest();
     await account.load();
+    expect(account.isSignedIn, isFalse);
+  });
+
+  test(
+    'Google sign-in: the reply is exchanged with the secret kept here',
+    () async {
+      final url = Uri.parse(await account.googleSignInUrl());
+      expect(url.path, '/auth/v1/authorize');
+      expect(url.queryParameters['provider'], 'google');
+      expect(url.queryParameters['redirect_to'], 'brainwake://auth');
+      final challenge = url.queryParameters['code_challenge']!;
+
+      Account.httpClient = MockClient((request) async {
+        expect(request.url.queryParameters['grant_type'], 'pkce');
+        final body = jsonDecode(request.body) as Map;
+        expect(body['auth_code'], 'the-code');
+        // The secret must hash to the challenge that was sent to Google.
+        final hashed = base64Url
+            .encode(sha256.convert(ascii.encode(body['code_verifier'])).bytes)
+            .replaceAll('=', '');
+        expect(hashed, challenge);
+        return session();
+      });
+      expect(
+        await account.completeOAuth(
+          Uri.parse('brainwake://auth?code=the-code'),
+        ),
+        isNull,
+      );
+      expect(account.isSignedIn, isTrue);
+    },
+  );
+
+  test('Google sign-in: a refusal is explained', () async {
+    expect(
+      await account.completeOAuth(
+        Uri.parse(
+          'brainwake://auth?error=access_denied&error_description=User+said+no',
+        ),
+      ),
+      contains('User said no'),
+    );
+    expect(
+      await account.completeOAuth(Uri.parse('brainwake://auth')),
+      contains('cancelled'),
+    );
     expect(account.isSignedIn, isFalse);
   });
 
