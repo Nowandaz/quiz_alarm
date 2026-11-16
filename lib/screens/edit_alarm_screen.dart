@@ -43,7 +43,27 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     {'name': 'Siren', 'path': 'assets/sounds/ringtones/siren.mp3'},
     {'name': 'Bell Tower', 'path': 'assets/sounds/ringtones/bell_tower.mp3'},
   ];
-  static const List<double> _fadeOptions = [0.0, 5.0, 10.0, 30.0, 60.0];
+  static const List<double> _fadeOptions = [
+    0.0,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    120.0,
+    150.0,
+    180.0,
+  ];
+
+  /// "30 seconds", "1 minute", "2.5 minutes".
+  static String _fadeLabel(double seconds) {
+    if (seconds == 0) return 'None';
+    if (seconds < 60) return '${seconds.toInt()} seconds';
+    final minutes = seconds / 60;
+    final text = minutes == minutes.roundToDouble()
+        ? '${minutes.toInt()}'
+        : minutes.toStringAsFixed(1);
+    return '$text minute${minutes == 1 ? '' : 's'}';
+  }
 
   late TimeOfDay _selectedTime;
   late final TextEditingController _labelCtrl;
@@ -539,30 +559,32 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (sheetContext) {
+        // Scrolls on small screens: there are eight options.
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Fade-in Duration',
-                style: Theme.of(sheetContext).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              for (final duration in _fadeOptions)
-                ListTile(
-                  title: Text(
-                    duration == 0 ? 'None' : '${duration.toInt()} seconds',
-                  ),
-                  trailing: _fadeDuration == duration
-                      ? const Icon(Icons.check)
-                      : null,
-                  onTap: () {
-                    setState(() => _fadeDuration = duration);
-                    Navigator.pop(sheetContext);
-                  },
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Fade-in Duration',
+                  style: Theme.of(sheetContext).textTheme.titleLarge,
                 ),
-            ],
+                const SizedBox(height: 8),
+                for (final duration in _fadeOptions)
+                  ListTile(
+                    title: Text(_fadeLabel(duration)),
+                    trailing: _fadeDuration == duration
+                        ? const Icon(Icons.check)
+                        : null,
+                    onTap: () {
+                      setState(() => _fadeDuration = duration);
+                      Navigator.pop(sheetContext);
+                    },
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -727,12 +749,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 const Divider(height: 1, indent: 16),
                 ListTile(
                   title: const Text('Fade-in Sound'),
-                  subtitle: Text(
-                    _fadeDuration == 0
-                        ? 'None'
-                        : '${_fadeDuration.toInt()} seconds',
-                    style: muted,
-                  ),
+                  subtitle: Text(_fadeLabel(_fadeDuration), style: muted),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _showFadePicker,
                 ),

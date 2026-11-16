@@ -92,8 +92,22 @@ Future<void> showAddTopicDialog(BuildContext context) async {
   }
 }
 
-class QuestionBankTab extends StatelessWidget {
+class QuestionBankTab extends StatefulWidget {
   const QuestionBankTab({super.key});
+
+  @override
+  State<QuestionBankTab> createState() => _QuestionBankTabState();
+}
+
+class _QuestionBankTabState extends State<QuestionBankTab> {
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -136,93 +150,146 @@ class QuestionBankTab extends StatelessWidget {
           style: theme.textTheme.bodySmall,
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 18),
-        for (final unit in bank.units)
-          Builder(
-            builder: (context) {
-              final topics = bank.topicsOf(unit.id);
-              final total = topics.fold<int>(
-                0,
-                (n, t) => n + bank.statsOf(t.id).total,
-              );
-              final mastered = topics.fold<int>(
-                0,
-                (n, t) => n + bank.statsOf(t.id).mastered,
-              );
-              final share = total == 0 ? 0.0 : mastered / total;
-
-              return Padding(
-                key: unit.id == bank.units.first.id ? TourKeys.firstUnit : null,
-                padding: const EdgeInsets.only(bottom: 14),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(28),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => UnitScreen(unit: unit)),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _search,
+          onChanged: (v) => setState(() => _query = v),
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            hintText: 'Search units and topics',
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: _query.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: 'Clear search',
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () {
+                      _search.clear();
+                      setState(() => _query = '');
+                    },
                   ),
-                  child: GlossCard(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    unit.name,
-                                    style: theme.textTheme.titleLarge,
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${topics.length} topics · $total questions',
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(
-                              Icons.chevron_right_rounded,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Overall subject mastery',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 14),
+        // While searching: the matching topics, straight to the topic.
+        if (_query.trim().isNotEmpty) ...[
+          for (final topic in bank.topics.where((t) {
+            final q = _query.trim().toLowerCase();
+            final unit = bank.units.where((u) => u.id == t.unitId);
+            return t.name.toLowerCase().contains(q) ||
+                unit.any((u) => u.name.toLowerCase().contains(q));
+          }))
+            TopicCard(
+              topic: topic,
+              stats: bank.statsOf(topic.id),
+              unitName: bank.units
+                  .where((u) => u.id == topic.unitId)
+                  .map((u) => u.name)
+                  .firstOrNull,
+            ),
+          if (!bank.topics.any((t) {
+            final q = _query.trim().toLowerCase();
+            return t.name.toLowerCase().contains(q) ||
+                bank.units.any(
+                  (u) => u.id == t.unitId && u.name.toLowerCase().contains(q),
+                );
+          }))
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Nothing matches "${_query.trim()}".',
+                textAlign: TextAlign.center,
+              ),
+            ),
+        ] else
+          for (final unit in bank.units)
+            Builder(
+              builder: (context) {
+                final topics = bank.topicsOf(unit.id);
+                final total = topics.fold<int>(
+                  0,
+                  (n, t) => n + bank.statsOf(t.id).total,
+                );
+                final mastered = topics.fold<int>(
+                  0,
+                  (n, t) => n + bank.statsOf(t.id).mastered,
+                );
+                final share = total == 0 ? 0.0 : mastered / total;
+
+                return Padding(
+                  key: unit.id == bank.units.first.id
+                      ? TourKeys.firstUnit
+                      : null,
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(28),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => UnitScreen(unit: unit)),
+                    ),
+                    child: GlossCard(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      unit.name,
+                                      style: theme.textTheme.titleLarge,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${topics.length} topics · $total questions',
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ),
-                            Text(
-                              '${(share * 100).round()}% mastered',
-                              style: TextStyle(
-                                color: scheme.primary,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 12,
+                              Icon(
+                                Icons.chevron_right_rounded,
+                                color: scheme.onSurfaceVariant,
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        LinearProgressIndicator(
-                          value: share,
-                          minHeight: 8,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                      ],
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Overall subject mastery',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${(share * 100).round()}% mastered',
+                                style: TextStyle(
+                                  color: scheme.primary,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          LinearProgressIndicator(
+                            value: share,
+                            minHeight: 8,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              );
-            },
-          ),
+                );
+              },
+            ),
       ],
     );
   }

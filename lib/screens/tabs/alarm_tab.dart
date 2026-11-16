@@ -168,8 +168,7 @@ class _AlarmTabState extends State<AlarmTab> {
                                       next == null
                                           ? 'No alarm is switched on'
                                           : 'Next alarm '
-                                                '${describeTimeUntil(next.$2, now)} '
-                                                '(${formatClock(next.$2, use24Hour: use24)})',
+                                                '${describeTimeUntil(next.$2, now)}',
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                       ),
