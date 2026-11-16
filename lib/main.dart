@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
+import 'services/account.dart';
 import 'services/alarm_backend.dart';
 import 'services/alarm_provider.dart';
 import 'services/bank_provider.dart';
@@ -21,9 +22,12 @@ Future<void> main() async {
     debugPrint('Alarm backend failed to start: $e');
   }
 
+  await Account.instance.load();
+
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider<Account>.value(value: Account.instance),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => BankProvider()),
         ChangeNotifierProvider(create: (_) => AlarmProvider(backend: backend)),

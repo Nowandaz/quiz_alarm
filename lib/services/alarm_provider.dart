@@ -99,7 +99,7 @@ class AlarmProvider extends ChangeNotifier {
 
   /// Asks the AI for fresh questions on the alarms' topics when they are
   /// running low, so nothing needs the network at ring time. Safe to call
-  /// often; does nothing without an API key.
+  /// often; does nothing when signed out.
   Future<void> refillQuestionBank() async {
     try {
       await loaded;

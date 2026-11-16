@@ -293,8 +293,8 @@ void main() {
     ];
 
     test('stores new questions with explanations', () async {
-      await resetApp(apiKey: 'k');
-      final prompts = fakeGemini((_) => ok({'questions': two}));
+      await resetApp(signedIn: true);
+      final prompts = fakeAi((_) => ok({'questions': two}));
       final r = await QuestionService.generateForTopic(topic);
       expect(r.error, isNull);
       expect(r.added, 2);
@@ -308,42 +308,44 @@ void main() {
       expect(prompts.single, contains('How do penicillins kill bacteria?'));
     });
 
-    test('accepts a bare list inside code fences', () async {
-      await resetApp(apiKey: 'k');
-      fakeGemini((_) => ok('```json\n${jsonEncode(two)}\n```'));
-      expect((await QuestionService.generateForTopic(topic)).added, 2);
+    test('accepts the field names the server uses', () async {
+      await resetApp(signedIn: true);
+      fakeAi(
+        (_) => ok({
+          'questions': [
+            {
+              'type': 'saq',
+              'text': 'Which class does azithromycin belong to?',
+              'options': <String>[],
+              'answer': 'Macrolides',
+              'alt_answers': ['Macrolide'],
+              'explanation': 'Azithromycin is a macrolide.',
+            },
+          ],
+          'remaining': 9,
+        }),
+      );
+      final r = await QuestionService.generateForTopic(topic);
+      expect(r.added, 1);
+      expect(r.questions.single.altAnswers, ['Macrolide']);
     });
 
-    test('reports the reason when the API refuses', () async {
-      await resetApp(apiKey: 'k');
-      fakeGemini(
-        (_) => http.Response('{"error":{"message":"Quota exceeded"}}', 429),
+    test('shows the server\'s reason when it refuses', () async {
+      await resetApp(signedIn: true);
+      fakeAi(
+        (_) => http.Response(
+          '{"detail":"You have used today\'s 10 AI requests."}',
+          429,
+        ),
       );
       final r = await QuestionService.generateForTopic(topic);
       expect(r.added, 0);
-      expect(r.error, contains('429'));
-      expect(r.error, contains('Quota exceeded'));
-    });
-
-    test('retries without the schema if the model rejects it', () async {
-      await resetApp(apiKey: 'k');
-      var calls = 0;
-      fakeGemini((body) {
-        calls++;
-        final hasSchema = (body['generationConfig'] as Map).containsKey(
-          'responseSchema',
-        );
-        return hasSchema
-            ? http.Response('{"error":{"message":"schema unsupported"}}', 400)
-            : ok({'questions': two});
-      });
-      expect((await QuestionService.generateForTopic(topic)).added, 2);
-      expect(calls, 2);
+      expect(r.error, contains('10 AI requests'));
     });
 
     test('says so when nothing usable came back', () async {
-      await resetApp(apiKey: 'k');
-      fakeGemini(
+      await resetApp(signedIn: true);
+      fakeAi(
         (_) => ok({
           'questions': [
             {'questionText': ''},
@@ -360,11 +362,11 @@ void main() {
       () async {
         expect(
           (await QuestionService.generateFresh(const [], count: 4)).error,
-          contains('No API key'),
+          contains('Sign in'),
         );
-        await resetApp(apiKey: 'k');
+        await resetApp(signedIn: true);
         var n = 0;
-        fakeGemini(
+        fakeAi(
           (_) => ok({
             'questions': [
               for (var i = 0; i < 2; i++)
@@ -386,14 +388,14 @@ void main() {
     );
 
     test(
-      'topUp does nothing without a key and fills low topics with one',
+      'topUp does nothing when signed out and fills low topics when signed in',
       () async {
-        fakeGemini((_) => ok({'questions': two}));
+        fakeAi((_) => ok({'questions': two}));
         expect((await QuestionService.topUp(const [])).added, 0);
 
-        await resetApp(apiKey: 'k');
+        await resetApp(signedIn: true);
         var n = 0;
-        fakeGemini(
+        fakeAi(
           (_) => ok({
             'questions': [
               {...two[1], 'questionText': 'Generated question ${n++}?'},
@@ -416,7 +418,7 @@ void main() {
     test(
       'explains, judges typed answers and saves a missing explanation',
       () async {
-        await resetApp(apiKey: 'k');
+        await resetApp(signedIn: true);
         final t = await QuestionRepository.addCustomTopic('Anatomy');
         const q = Question(
           id: 'a1',
@@ -438,7 +440,7 @@ void main() {
             source: 'ai',
           ),
         );
-        final prompts = fakeGemini(
+        final prompts = fakeAi(
           (_) => ok({
             'correct': true,
             'feedback': 'Yes, the thigh bone is the femur.',

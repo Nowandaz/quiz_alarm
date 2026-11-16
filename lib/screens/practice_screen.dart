@@ -12,7 +12,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../data/question_repository.dart';
 import '../models/models.dart';
-import '../services/gemini_client.dart';
+import '../services/ai_client.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
@@ -69,7 +69,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   String _userAnswer = '';
   bool _verdict = false;
 
-  bool _hasKey = false;
+  bool get _hasKey => AiClient.available;
   bool _aiLoading = false;
   String? _aiText;
   String? _aiError;
@@ -86,9 +86,6 @@ class _PracticeScreenState extends State<PracticeScreen> {
   @override
   void initState() {
     super.initState();
-    GeminiClient.hasApiKey().then((v) {
-      if (mounted) setState(() => _hasKey = v);
-    });
     _start();
   }
 
@@ -660,8 +657,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
           )
         else if (!hasExplanation)
           Text(
-            'No explanation is saved for this question. Add a Gemini API key '
-            'in Settings to get one from the AI tutor.',
+            'No explanation is saved for this question. Sign in from Settings '
+            'to get one from the AI tutor.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
       ],

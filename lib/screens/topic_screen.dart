@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/bank_provider.dart';
-import '../services/gemini_client.dart';
+import '../services/ai_client.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/question_image.dart';
@@ -65,12 +65,12 @@ class _TopicScreenState extends State<TopicScreen> {
   }
 
   Future<void> _generate() async {
-    if (!await GeminiClient.hasApiKey()) {
+    if (!AiClient.available) {
       if (mounted) {
         _message(
-          'API key needed',
-          'Add your Gemini API key in Settings (the gear icon on the home '
-              'screen) to generate questions.',
+          'Sign in needed',
+          'Sign in from Settings (the gear icon on the home screen) to '
+              'have the AI write new questions.',
         );
       }
       return;

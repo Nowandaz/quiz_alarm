@@ -1,5 +1,5 @@
 /// Shared set-up for tests: an in-memory SQLite database, empty
-/// preferences and a fake Gemini server.
+/// preferences and a fake AI server.
 library;
 
 import 'dart:convert';
@@ -10,14 +10,16 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:quiz_alarm/data/app_database.dart';
 import 'package:quiz_alarm/data/question_repository.dart';
-import 'package:quiz_alarm/services/gemini_client.dart';
+import 'package:quiz_alarm/services/account.dart';
+import 'package:quiz_alarm/services/ai_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Call from setUp(). Gives every test a fresh, empty world.
+/// [signedIn] puts the app in a signed-in state (AI features need it).
 Future<void> resetApp({
   Map<String, Object> prefs = const {},
-  String? apiKey,
+  bool signedIn = false,
 }) async {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -26,37 +28,30 @@ Future<void> resetApp({
   AppDatabase.pathOverride = inMemoryDatabasePath;
   QuestionRepository.resetForTest();
   SharedPreferences.setMockInitialValues(prefs);
-  FlutterSecureStorage.setMockInitialValues({'gemini_api_key': ?apiKey});
+  FlutterSecureStorage.setMockInitialValues({});
+  Account.instance.resetForTest();
+  if (signedIn) Account.instance.signInForTest();
 }
 
-/// Wraps [text] the way the Gemini API returns model output.
-String geminiBody(String text) => jsonEncode({
-  'candidates': [
-    {
-      'content': {
-        'parts': [
-          {'text': text},
-        ],
-      },
-    },
-  ],
-});
-
-/// Makes every Gemini call answer with [reply] (given the request body).
-/// Returns the list that collects the prompts that were sent.
-List<String> fakeGemini(
-  http.Response Function(Map<String, dynamic> body) reply,
-) {
-  final prompts = <String>[];
-  GeminiClient.httpClient = MockClient((request) async {
-    final body = jsonDecode(request.body) as Map<String, dynamic>;
-    prompts.add(body['contents'][0]['parts'][0]['text'] as String);
-    return reply(body);
+/// Makes every call to the AI server answer with [reply] (given the
+/// request body). Returns the list that collects the raw request bodies.
+List<String> fakeAi(http.Response Function(Map<String, dynamic> body) reply) {
+  final requests = <String>[];
+  AiClient.httpClient = MockClient((request) async {
+    expect(request.headers['Authorization'], 'Bearer test-token');
+    requests.add(request.body);
+    return reply(
+      request.body.isEmpty
+          ? const {}
+          : jsonDecode(request.body) as Map<String, dynamic>,
+    );
   });
-  return prompts;
+  return requests;
 }
 
+/// A successful server reply carrying [json].
 http.Response ok(Object json) => http.Response.bytes(
-  utf8.encode(geminiBody(json is String ? json : jsonEncode(json))),
+  utf8.encode(jsonEncode(json)),
   200,
+  headers: {'content-type': 'application/json'},
 );
