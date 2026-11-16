@@ -24,6 +24,11 @@ import 'tabs/reports_tab.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  /// An account is required to use the app. The browser emulator can
+  /// switch this off (open it with ?guest) to try screens without one.
+  static bool requireAccount = true;
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
@@ -48,6 +53,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+
+    // Signing out brings the sign-in screen back.
+    Account.instance.addListener(_requireAccount);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<AlarmProvider>(context, listen: false);
@@ -80,24 +88,41 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  bool _gateOpen = false;
+
+  @override
+  void dispose() {
+    Account.instance.removeListener(_requireAccount);
+    super.dispose();
+  }
+
+  /// Shows the sign-in screen until the user is signed in. It sits on top
+  /// of this screen rather than replacing it, so a ringing alarm can still
+  /// open its quiz over it.
+  Future<void> _requireAccount() async {
+    if (!HomeScreen.requireAccount ||
+        Account.instance.isSignedIn ||
+        _gateOpen ||
+        !mounted) {
+      return;
+    }
+    _gateOpen = true;
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => const AccountScreen(),
+      ),
+    );
+    _gateOpen = false;
+  }
+
   /// First launch: offer the tour, then ask for the permissions alarms
   /// need. Later launches only ask for permissions not yet dealt with.
   Future<void> _welcome({required bool simulated}) async {
-    // A brand-new install starts with the sign-in screen (it can be
-    // skipped), then the tour.
-    final firstPrefs = await SharedPreferences.getInstance();
-    if (!(firstPrefs.getBool('welcome_seen') ?? false)) {
-      await firstPrefs.setBool('welcome_seen', true);
-      if (!Account.instance.isSignedIn && mounted) {
-        await Navigator.push(
-          context,
-          MaterialPageRoute<void>(
-            fullscreenDialog: true,
-            builder: (_) => const AccountScreen(welcome: true),
-          ),
-        );
-      }
-    }
+    // An account is required: the sign-in screen comes first, then the tour.
+    await _requireAccount();
+    if (!mounted) return;
     if (await AppTour.shouldShow() && mounted) {
       await AppTour.markSeen();
       if (!mounted) return;
