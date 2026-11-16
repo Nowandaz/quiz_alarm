@@ -12,6 +12,7 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import 'alarm_backend.dart';
 import 'question_service.dart';
+import 'sync_service.dart';
 
 /// Next time an alarm should fire, strictly after [now].
 /// An empty [activeDays] means "ring once" (next occurrence of [time]).
@@ -95,11 +96,12 @@ class AlarmProvider extends ChangeNotifier {
     : backend = backend ?? AlarmBackend.forPlatform() {
     _loadAlarms().then((_) => unawaited(refillQuestionBank()));
     _ringSubscription = this.backend.rings.listen(_onRing);
+    SyncService.onAlarmsRestored = _loadAlarms;
   }
 
   /// Asks the AI for fresh questions on the alarms' topics when they are
   /// running low, so nothing needs the network at ring time. Safe to call
-  /// often; does nothing without an API key.
+  /// often; does nothing when signed out.
   Future<void> refillQuestionBank() async {
     try {
       await loaded;
@@ -511,6 +513,7 @@ class AlarmProvider extends ChangeNotifier {
       jsonEncode(alarms.map((e) => e.toJson()).toList()),
     );
     notifyListeners();
+    SyncService.schedule(); // keeps the server's backup of the alarms fresh
   }
 
   @override

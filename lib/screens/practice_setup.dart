@@ -7,7 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/bank_provider.dart';
-import '../services/gemini_client.dart';
+import '../services/ai_client.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/topic_picker.dart';
 import 'practice_screen.dart';
@@ -19,8 +19,7 @@ Future<void> showPracticeSetup(
   required Set<String> initialTopics,
   String title = 'Practice',
 }) async {
-  final hasKey = await GeminiClient.hasApiKey();
-  if (!context.mounted) return;
+  final hasKey = AiClient.available;
   final bank = context.read<BankProvider>();
 
   var topics = {...initialTopics};
@@ -171,8 +170,8 @@ Future<void> showPracticeSetup(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
                               !hasKey
-                                  ? 'AI questions need a Gemini API key '
-                                        '(Settings on the Alarms tab).'
+                                  ? 'AI questions need an account. Sign in '
+                                        'from Settings on the Alarms tab.'
                                   : switch (source) {
                                       PracticeSource.bank =>
                                         'Saved questions. Works offline. '
@@ -200,8 +199,8 @@ Future<void> showPracticeSetup(
                             subtitle: Text(
                               hasKey
                                   ? 'Explains where your answer went wrong.'
-                                  : 'Needs a Gemini API key. You still get '
-                                        'the saved explanations.',
+                                  : 'Needs an account (sign in from Settings). '
+                                        'You still get the saved explanations.',
                             ),
                             value: tutor && hasKey,
                             onChanged: hasKey

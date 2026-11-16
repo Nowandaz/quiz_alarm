@@ -1,19 +1,22 @@
-/// Settings: theme, Gemini API key / model, and a visible status of the
-/// AI question generation (so failures are no longer silent).
+/// Settings: theme, clock, alarm permissions, the account, and a visible
+/// status of the AI question generation (so failures are not silent).
 library;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/alarm_provider.dart';
-import '../services/gemini_client.dart';
+import '../services/account.dart';
+import '../services/ai_client.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/question_service.dart';
+import '../services/sync_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
+import 'account_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -22,9 +25,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _keyController = TextEditingController();
-  final _modelController = TextEditingController();
-  bool _testing = false;
+  AiAllowance? _allowance;
   bool _generating = false;
   String? _lastStatus;
 
@@ -37,12 +38,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    GeminiClient.getApiKey().then((k) {
-      if (mounted) _keyController.text = k ?? '';
-    });
-    GeminiClient.getModel().then((m) {
-      if (mounted) _modelController.text = m;
-    });
+    _loadAllowance();
     _loadStatus();
     _loadAlarmAccess();
   }
@@ -68,16 +64,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _lastStatus = s);
   }
 
-  @override
-  void dispose() {
-    _keyController.dispose();
-    _modelController.dispose();
-    super.dispose();
+  /// How much AI is left today (only when signed in and online).
+  Future<void> _loadAllowance() async {
+    if (!AiClient.available) {
+      if (mounted) setState(() => _allowance = null);
+      return;
+    }
+    try {
+      final a = await AiClient.allowance();
+      if (mounted) setState(() => _allowance = a);
+    } catch (e) {
+      debugPrint('Could not read the AI allowance: $e');
+    }
   }
 
-  Future<void> _store() async {
-    await GeminiClient.setApiKey(_keyController.text);
-    await GeminiClient.setModel(_modelController.text);
+  Future<void> _openAccount() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(builder: (_) => const AccountScreen()),
+    );
+    if (!mounted) return;
+    _loadAllowance();
+    if (AiClient.available) {
+      // Top up the offline bank in the background now that the AI works.
+      Provider.of<AlarmProvider>(
+        context,
+        listen: false,
+      ).refillQuestionBank().then((_) => _loadStatus());
+    }
+  }
+
+  Future<void> _signOut() async {
+    await Account.instance.signOut();
+    if (mounted) setState(() => _allowance = null);
   }
 
   void _dialog(String title, String body) {
@@ -96,43 +115,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _save() async {
-    await _store();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Saved Settings')));
-    // Top up the offline bank in the background with the new key/model.
-    Provider.of<AlarmProvider>(
-      context,
-      listen: false,
-    ).refillQuestionBank().then((_) => _loadStatus());
-  }
-
-  Future<void> _test() async {
-    setState(() => _testing = true);
-    await _store();
-    final error = await GeminiClient.testConnection();
-    if (!mounted) return;
-    setState(() => _testing = false);
-    _dialog(
-      error == null ? 'Connection works' : 'Connection failed',
-      error ?? 'The key and model are valid. Questions can be generated.',
-    );
-  }
-
   /// Runs a top-up for every topic right now and shows exactly what
   /// happened, including the error if it fails.
   Future<void> _generateNow() async {
     setState(() => _generating = true);
-    await _store();
-    if (!await GeminiClient.hasApiKey()) {
-      if (!mounted) return;
+    if (!AiClient.available) {
       setState(() => _generating = false);
-      _dialog('API key needed', 'Enter your Gemini API key first.');
+      _dialog(
+        'Sign in needed',
+        'Sign in above to have the AI write questions.',
+      );
       return;
     }
     final result = await QuestionService.topUp(const [], targetUnseen: 1 << 30);
     await _loadStatus();
+    _loadAllowance();
     if (!mounted) return;
     setState(() => _generating = false);
     if (result.error != null) {
@@ -155,6 +152,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDark = themeProvider.themeMode == ThemeMode.dark;
     final small = Theme.of(context).textTheme.bodySmall;
+    final account = context.watch<Account>();
+    final allowance = _allowance;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -259,39 +258,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 24),
-          const Text(
-            'Gemini API key',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+          const Text('Account', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-            'Used to write new questions ahead of time and for the AI tutor '
-            'in Free Revision. Everything else works offline.',
+            'Alarms and the built-in questions work without an account. '
+            'Signing in keeps your progress safe and turns on the AI.',
             style: small,
           ),
           const SizedBox(height: 8),
-          TextField(
-            controller: _keyController,
-            decoration: const InputDecoration(hintText: 'Enter API Key'),
-            obscureText: true,
-          ),
-          const SizedBox(height: 16),
-          const Text('Model', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _modelController,
-            decoration: const InputDecoration(
-              hintText: GeminiClient.defaultModel,
-              helperText: 'If a test fails with "not found", try a newer Gemini Flash model name.',
-              helperMaxLines: 2,
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton(onPressed: _save, child: const Text('Save')),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: _testing ? null : _test,
-            child: Text(_testing ? 'Testing...' : 'Test connection'),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: account.isSignedIn
+                ? Column(
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.account_circle_rounded),
+                        title: Text(account.email ?? 'Signed in'),
+                        subtitle: Text(
+                          allowance == null
+                              ? 'Signed in'
+                              : !allowance.enabled
+                              ? 'AI is switched off for now'
+                              : '${allowance.plan == 'premium' ? 'Premium' : 'Free'} plan: '
+                                    '${allowance.remaining} of ${allowance.limit} '
+                                    'AI requests left today',
+                        ),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: SyncService.running,
+                        builder: (context, running, _) => ListTile(
+                          leading: const Icon(Icons.sync_rounded),
+                          title: const Text('Sync now'),
+                          subtitle: ValueListenableBuilder<String?>(
+                            valueListenable: SyncService.status,
+                            builder: (context, status, _) => Text(
+                              running
+                                  ? 'Syncing...'
+                                  : status ??
+                                        'Your progress and the question bank '
+                                            'sync by themselves.',
+                            ),
+                          ),
+                          onTap: running ? null : () => SyncService.run(),
+                        ),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      ListTile(
+                        leading: const Icon(Icons.logout_rounded),
+                        title: const Text('Sign out'),
+                        onTap: _signOut,
+                      ),
+                    ],
+                  )
+                : ListTile(
+                    leading: const Icon(Icons.account_circle_outlined),
+                    title: const Text('Sign in or create an account'),
+                    subtitle: const Text(
+                      'Free. Syncs your progress, turns on the AI.',
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: _openAccount,
+                  ),
           ),
           const SizedBox(height: 24),
           const Divider(),

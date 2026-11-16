@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:quiz_alarm/models/models.dart';
 import 'package:quiz_alarm/services/alarm_provider.dart';
-import 'package:quiz_alarm/services/gemini_client.dart';
 import 'package:quiz_alarm/services/question_service.dart';
 import 'package:quiz_alarm/services/theme_provider.dart';
 import 'package:quiz_alarm/widgets/app_widgets.dart';
@@ -259,24 +258,6 @@ void main() {
       );
       expect(QuestionService.questionItems({'questionText': 'x'}).length, 1);
       expect(QuestionService.questionItems('text'), isEmpty);
-    });
-  });
-
-  group('GeminiClient parsing', () {
-    test('decodeJson strips fences and surrounding text', () {
-      expect(GeminiClient.decodeJson('```json\n{"ok": true}\n```'), {
-        'ok': true,
-      });
-      expect(GeminiClient.decodeJson('Here you go: [1, 2] Enjoy'), [1, 2]);
-    });
-
-    test('extractText joins parts and skips thoughts', () {
-      const body =
-          '{"candidates":[{"content":{"parts":['
-          '{"text":"thinking...","thought":true},'
-          '{"text":"{\\"a\\":"},{"text":"1}"}]}}]}';
-      expect(GeminiClient.extractText(body), '{"a":1}');
-      expect(GeminiClient.extractText('{"candidates":[]}'), '');
     });
   });
 }

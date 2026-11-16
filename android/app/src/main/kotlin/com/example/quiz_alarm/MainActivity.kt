@@ -11,20 +11,57 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 /**
- * Adds three small system calls the Dart side needs (see
+ * Adds a few small system calls the Dart side needs (see
  * lib/services/system_bridge.dart):
  *  - canUseFullScreenIntent: may an alarm open the quiz over the lock screen
  *    by itself? (Android 14+ lets the user switch this off per app.)
  *  - openFullScreenIntentSettings: opens the settings page for that switch.
  *  - bringToFront: shows the app when an alarm rings while it is in the
  *    background (needs the "display over other apps" permission).
+ *  - openUrl: opens a web address in the browser (Google sign-in).
+ *  - takeAuthLink / authLink: hands the brainwake://auth?... link the
+ *    browser returns after Google sign-in (caught by AuthRedirectActivity)
+ *    to the Dart side.
  */
 class MainActivity : FlutterActivity() {
+    companion object {
+        // The sign-in link the browser came back with (set by
+        // AuthRedirectActivity), until the Dart side has taken it.
+        @JvmStatic
+        var pendingAuthLink: String? = null
+    }
+
+    private var channel: MethodChannel? = null
+
+    override fun onResume() {
+        super.onResume()
+        val link = pendingAuthLink ?: return
+        val ch = channel ?: return
+        pendingAuthLink = null
+        ch.invokeMethod("authLink", link)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "brainwake/system")
-            .setMethodCallHandler { call, result ->
+        val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "brainwake/system")
+        channel = ch
+        ch.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "openUrl" -> {
+                        try {
+                            val url = call.argument<String>("url") ?: ""
+                            val view = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                            view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(view)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "takeAuthLink" -> {
+                        result.success(pendingAuthLink)
+                        pendingAuthLink = null
+                    }
                     "canUseFullScreenIntent" -> {
                         if (Build.VERSION.SDK_INT >= 34) {
                             val manager =

@@ -6,9 +6,13 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
+import 'services/account.dart';
 import 'services/alarm_backend.dart';
 import 'services/alarm_provider.dart';
+import 'data/question_repository.dart';
 import 'services/bank_provider.dart';
+import 'services/sync_service.dart';
+import 'services/system_bridge.dart';
 import 'services/theme_provider.dart';
 import 'theme/app_theme.dart';
 
@@ -21,9 +25,28 @@ Future<void> main() async {
     debugPrint('Alarm backend failed to start: $e');
   }
 
+  await Account.instance.load();
+
+  // Syncing with the server: at start, shortly after anything of the
+  // user's changes, and when they sign in or out.
+  SyncService.enabled = true;
+  QuestionRepository.onLocalChange = SyncService.schedule;
+  Account.instance.addListener(
+    () => SyncService.schedule(const Duration(seconds: 1)),
+  );
+  // The browser hands Google sign-ins back as a link.
+  SystemBridge.listenForAuthLinks((link) async {
+    Account.instance.oauthError.value = await Account.instance.completeOAuth(
+      Uri.parse(link),
+    );
+  });
+  SyncService.loadStatus();
+  SyncService.schedule(const Duration(seconds: 3));
+
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider<Account>.value(value: Account.instance),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => BankProvider()),
         ChangeNotifierProvider(create: (_) => AlarmProvider(backend: backend)),

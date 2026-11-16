@@ -18,7 +18,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 3;
+  static const int schemaVersion = 4;
   static const String fileName = 'brainwake.db';
 
   static Database? _db;
@@ -86,7 +86,8 @@ class AppDatabase {
         explanation TEXT NOT NULL DEFAULT '',
         image TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'seed',
-        created_at INTEGER NOT NULL
+        created_at INTEGER NOT NULL,
+        synced INTEGER NOT NULL DEFAULT 0
       )''');
     batch.execute(
       'CREATE UNIQUE INDEX idx_questions_unique ON questions(topic_id, text_key)',
@@ -100,7 +101,9 @@ class AppDatabase {
         answered_at INTEGER NOT NULL,
         session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
         user_answer TEXT NOT NULL DEFAULT '',
-        duration_ms INTEGER
+        duration_ms INTEGER,
+        uuid TEXT,
+        synced INTEGER NOT NULL DEFAULT 0
       )''');
     batch.execute(_createSessions);
     batch.execute(
@@ -109,6 +112,9 @@ class AppDatabase {
     batch.execute(
       'CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
     );
+    for (final sql in _syncIndexes) {
+      batch.execute(sql);
+    }
     await batch.commit(noResult: true);
   }
 
@@ -121,8 +127,17 @@ class AppDatabase {
       required_streak INTEGER,
       started_at INTEGER NOT NULL,
       ended_at INTEGER,
-      outcome TEXT
+      outcome TEXT,
+      uuid TEXT,
+      synced INTEGER NOT NULL DEFAULT 0
     )''';
+
+  // "uuid" is the row's name on the server, so uploading or restoring the
+  // same row twice changes nothing. "synced" = already uploaded.
+  static const List<String> _syncIndexes = [
+    'CREATE UNIQUE INDEX idx_sessions_uuid ON sessions(uuid)',
+    'CREATE UNIQUE INDEX idx_attempts_uuid ON attempts(uuid)',
+  ];
 
   /// Brings an older database up to date without losing anything.
   static Future<void> _upgrade(Database db, int from, int to) async {
@@ -142,6 +157,27 @@ class AppDatabase {
       await db.execute(
         "ALTER TABLE questions ADD COLUMN image TEXT NOT NULL DEFAULT ''",
       );
+    }
+    if (from < 4) {
+      // Syncing with the server (see lib/services/sync_service.dart).
+      // A version-2 database was created with the newer sessions table.
+      final sessionColumns = await db.rawQuery('PRAGMA table_info(sessions)');
+      if (!sessionColumns.any((c) => c['name'] == 'uuid')) {
+        await db.execute('ALTER TABLE sessions ADD COLUMN uuid TEXT');
+        await db.execute(
+          'ALTER TABLE sessions ADD COLUMN synced INTEGER NOT NULL DEFAULT 0',
+        );
+      }
+      await db.execute('ALTER TABLE attempts ADD COLUMN uuid TEXT');
+      await db.execute(
+        'ALTER TABLE attempts ADD COLUMN synced INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute(
+        'ALTER TABLE questions ADD COLUMN synced INTEGER NOT NULL DEFAULT 0',
+      );
+      for (final sql in _syncIndexes) {
+        await db.execute(sql);
+      }
     }
   }
 
