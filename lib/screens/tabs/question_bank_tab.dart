@@ -10,6 +10,7 @@ import '../../data/question_repository.dart';
 import '../../models/models.dart';
 import '../../services/bank_provider.dart';
 import '../../widgets/app_widgets.dart';
+import '../../widgets/coach_tour.dart';
 import '../practice_setup.dart';
 import '../unit_screen.dart';
 import '../topic_screen.dart';
@@ -121,6 +122,7 @@ class QuestionBankTab extends StatelessWidget {
       ),
       children: [
         PrimaryButton(
+          key: TourKeys.practise,
           icon: Icons.play_arrow_rounded,
           label: 'Practise',
           onPressed: () => showPracticeSetup(
@@ -150,6 +152,7 @@ class QuestionBankTab extends StatelessWidget {
               final share = total == 0 ? 0.0 : mastered / total;
 
               return Padding(
+                key: unit.id == bank.units.first.id ? TourKeys.firstUnit : null,
                 padding: const EdgeInsets.only(bottom: 14),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(28),

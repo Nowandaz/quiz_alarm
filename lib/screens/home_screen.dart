@@ -13,9 +13,9 @@ import '../services/alarm_provider.dart';
 import '../services/system_bridge.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
 import 'settings_screen.dart';
-import 'tour_screen.dart';
 import 'tabs/alarm_tab.dart';
 import 'tabs/question_bank_tab.dart';
 import 'tabs/reports_tab.dart';
@@ -78,19 +78,130 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  /// First launch: the walk-through, then the permission questions it
-  /// announces. Later launches go straight to any permission still missing.
+  /// First launch: offer the tour, then ask for the permissions alarms
+  /// need. Later launches only ask for permissions not yet dealt with.
   Future<void> _welcome({required bool simulated}) async {
-    if (await TourScreen.shouldShow() && mounted) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => TourScreen(showPermissions: !simulated),
+    if (await AppTour.shouldShow() && mounted) {
+      await AppTour.markSeen();
+      if (!mounted) return;
+      final wanted = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Welcome to BrainWake'),
+          content: const Text(
+            'The alarm you can only switch off by answering revision '
+            'questions.\n\nWant a one-minute tour of where everything is?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Skip'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Show me around'),
+            ),
+          ],
         ),
       );
+      if (wanted == true && mounted) await _runTour();
     }
     // The simulator has no OS permissions to ask for.
     if (!simulated && mounted) await _requestPermissions();
+  }
+
+  Future<void> _goToTab(int index) async {
+    if (!mounted) return;
+    setState(() {
+      _currentIndex = index;
+      _navHidden = false;
+    });
+  }
+
+  /// The interactive tour: spotlights real elements, switching tabs as it
+  /// goes, and ends back on the Alarms tab.
+  Future<void> _runTour() async {
+    await AppTour.run(context, [
+      CoachStep(
+        before: () => _goToTab(0),
+        target: TourKeys.clock,
+        title: 'Your clock',
+        body:
+            'Shows the time and how long until your next alarm. Tap the '
+            'clock to switch between digital and analog.',
+      ),
+      CoachStep(
+        target: TourKeys.addAlarm,
+        title: 'Add an alarm',
+        body:
+            'Set the time and repeat days, then choose the topics it asks '
+            'about, how many correct answers in a row it takes, the '
+            'ringtone and the snooze length.',
+      ),
+      CoachStep(
+        target: TourKeys.testQuiz,
+        title: 'Try the quiz',
+        body:
+            'See what an alarm looks like without waiting for one. When a '
+            'real alarm rings, this quiz opens by itself at full volume, '
+            'and only the right answers stop it.',
+      ),
+      CoachStep(
+        target: TourKeys.settings,
+        title: 'Settings',
+        body:
+            'Dark or light theme, 12 or 24-hour clock, and the phone '
+            'permissions alarms need. You can also replay this tour here.',
+      ),
+      CoachStep(
+        before: () => _goToTab(1),
+        target: TourKeys.navBanks,
+        title: 'Question banks',
+        body:
+            'The questions your alarms use live here, and you can study '
+            'them any time, even without internet.',
+      ),
+      CoachStep(
+        target: TourKeys.practise,
+        title: 'Practise',
+        body:
+            'Start a session: pick the topics, how many questions, and '
+            'whether they come from the saved bank or are written fresh by '
+            'the AI. Every answer comes with an explanation.',
+      ),
+      CoachStep(
+        target: TourKeys.firstUnit,
+        title: 'Units and topics',
+        body:
+            'Each card is a unit with your mastery so far. Tap it to see '
+            'its topics, and inside a topic which questions you have done '
+            'and which are still to do.',
+      ),
+      CoachStep(
+        before: () => _goToTab(2),
+        target: TourKeys.navReports,
+        title: 'Reports',
+        body: 'Your progress is tracked here automatically.',
+      ),
+      CoachStep(
+        target: TourKeys.reportsHero,
+        title: 'How you are doing',
+        body:
+            'Your overall accuracy, with accuracy per topic, how long '
+            'alarms take you to switch off, and the history of every alarm '
+            'and practice session below.',
+      ),
+      CoachStep(
+        before: () => _goToTab(0),
+        title: 'That is the tour',
+        body:
+            'Add your first alarm to get started. If your phone asks to '
+            'allow notifications or full-screen alarms, please allow them '
+            'so alarms can ring properly.',
+      ),
+    ]);
+    await _goToTab(0);
   }
 
   Future<void> _requestPermissions() async {
@@ -216,14 +327,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     if (_currentIndex == 0)
                       IconButton(
+                        key: TourKeys.settings,
                         tooltip: 'Settings',
                         icon: const Icon(Icons.tune_rounded),
-                        onPressed: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const SettingsScreen(),
-                          ),
-                        ),
+                        onPressed: () async {
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const SettingsScreen(),
+                            ),
+                          );
+                          // "Show the tour" in Settings.
+                          if (result == 'tour' && mounted) _runTour();
+                        },
                       ),
                   ],
                 ),
@@ -282,17 +398,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 _currentIndex = i;
                 _navHidden = false;
               }),
-              destinations: const [
-                NavigationDestination(
+              destinations: [
+                const NavigationDestination(
                   icon: Icon(Icons.alarm_rounded),
                   label: 'Alarms',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.auto_stories_rounded),
+                  key: TourKeys.navBanks,
+                  icon: const Icon(Icons.auto_stories_rounded),
                   label: 'Banks',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.insights_rounded),
+                  key: TourKeys.navReports,
+                  icon: const Icon(Icons.insights_rounded),
                   label: 'Reports',
                 ),
               ],

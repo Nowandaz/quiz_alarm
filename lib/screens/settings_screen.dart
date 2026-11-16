@@ -14,7 +14,6 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/question_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
-import 'tour_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -195,15 +194,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: const Icon(Icons.explore_rounded),
                   title: const Text('Show the tour'),
-                  subtitle: const Text('The short walk-through of the app.'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      fullscreenDialog: true,
-                      builder: (_) => TourScreen(showPermissions: _android),
-                    ),
+                  subtitle: const Text(
+                    'Points out where everything is, on the real screens.',
                   ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  // The home screen runs the tour when Settings closes.
+                  onTap: () => Navigator.pop(context, 'tour'),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 const ListTile(
