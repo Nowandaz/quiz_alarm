@@ -1,31 +1,26 @@
 # Miscellaneous
-
 *.class
 *.log
 *.pyc
 *.swp
 .DS_Store
 .atom/
+.build/
 .buildlog/
 .history
 .svn/
-*~
+.swiftpm/
+migrate_working_dir/
 
-# IntelliJ related
-
+# IDE files
 *.iml
 *.ipr
 *.iws
 .idea/
-
-# Visual Studio Code workspace settings
-
 .vscode/
 
-# Flutter/Dart/Pub related
-
-/doc/api/
-/ios/Flutter/.last_build_id
+# Flutter / Dart / pub
+# (pubspec.lock is NOT ignored, because this is an app)
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
@@ -33,34 +28,65 @@
 .pub-cache/
 .pub/
 /build/
+/coverage/
 
-# Web related
-
-
-# Symbolication related
-
+# Symbolication and obfuscation
 app.*.symbols
-
-# Obfuscation related
-
 app.*.map.json
 
-# Android Studio and Gradle build artifacts
+# Generated plugin files (rewritten by every pub get and build)
+**/generated_plugin_registrant.*
+**/generated_plugins.cmake
+**/GeneratedPluginRegistrant.*
 
+# Android
+.gradle/
+.cxx/
+**/android/captures/
+**/android/local.properties
 /android/app/debug
 /android/app/profile
 /android/app/release
-/android/app/output
-/android/app/build/
-/android/app/.cxx/
-/android/.gradle/
-/android/build/
-/android/local.properties
+android/build/
 
-# Exceptions to above rules.
+# Signing keys and secrets (never commit these)
+**/android/key.properties
+key.properties
+*.jks
+*.keystore
+.env
+*.env
 
-!/packages/flutter_tools/test/data/dart_dependencies_test//.packages
+# iOS / macOS
+**/ios/**/DerivedData/
+**/ios/**/xcuserdata/
+**/ios/**/*.xcworkspace/xcuserdata/
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/ephemeral/
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/ServiceDefinitions.json
+**/macos/Flutter/ephemeral/
+**/macos/Flutter/Generated.xcconfig
+**/macos/Flutter/flutter_export_environment.sh
+**/macos/Pods/
+**/macos/**/xcuserdata/
 
-# Mini emulator browser profile and AI-context dumps
-tool/emulator/.profile/
+# Linux / Windows
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+
+# Visual Studio (Windows runner)
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+x64/
+x86/
+*.[Cc]ache
+!*.[Cc]ache/
+
+# This project
 repomix-output.xml
