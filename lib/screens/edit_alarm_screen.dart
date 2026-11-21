@@ -693,15 +693,6 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        actions: [
-          TextButton(
-            onPressed: _saveAlarm,
-            child: const Text(
-              'Done',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ),
-        ],
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(

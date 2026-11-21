@@ -17,6 +17,7 @@ import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
+import 'practice_results.dart';
 
 /// Where a practice session takes its questions from.
 enum PracticeSource { bank, ai, both }
@@ -39,6 +40,10 @@ class PracticeScreen extends StatefulWidget {
   /// Saved questions, questions the AI writes now, or half of each.
   final PracticeSource source;
 
+  /// Exactly these questions, in this order, instead of drawing from the
+  /// bank (used to practise the ones just got wrong).
+  final List<Question>? questions;
+
   const PracticeScreen({
     super.key,
     required this.title,
@@ -47,6 +52,7 @@ class PracticeScreen extends StatefulWidget {
     this.mode = 'bank',
     this.limit,
     this.source = PracticeSource.bank,
+    this.questions,
   });
 
   @override
@@ -82,7 +88,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   int _answered = 0;
   int _correct = 0;
-  int _skipped = 0; // answered with "I don't know"
+
+  /// Every question answered in this session, for the results screen.
+  final List<PracticeResult> _results = [];
+
+  bool get _preset => widget.questions != null;
 
   @override
   void initState() {
@@ -106,9 +116,15 @@ class _PracticeScreenState extends State<PracticeScreen> {
   /// True when there is nothing more to ask after the current question.
   bool get _isLast =>
       _limitReached ||
+      (_preset && _fresh.isEmpty) ||
       (widget.source == PracticeSource.ai && !_useBank && _fresh.isEmpty);
 
   Future<void> _start() async {
+    if (_preset) {
+      _fresh.addAll(widget.questions!);
+      _limit = _fresh.length;
+      return _next();
+    }
     if (widget.source == PracticeSource.bank) return _next();
     // Ask the AI for new questions first; this can take up to a minute.
     setState(() => _phase = _Phase.preparing);
@@ -148,6 +164,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _answerCtrl.clear();
     final q = _fresh.isNotEmpty
         ? _fresh.removeAt(0).shuffled()
+        : _preset
+        ? null
         : await QuestionService.nextQuestion(
             widget.selectors,
             exclude: _shown,
@@ -210,7 +228,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _phase = _Phase.answered;
       _answered++;
       if (verdict) _correct++;
-      if (answer.trim().isEmpty) _skipped++;
+      _results.add(PracticeResult(q, answer.trim(), verdict));
     });
     _session ??= QuestionRepository.startSession(widget.mode, widget.title);
     _sessionId = await _session;
@@ -261,25 +279,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
       Navigator.pop(context);
       return;
     }
-    final percent = (_correct * 100 / _answered).round();
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Session finished'),
-        content: Text(
-          'You answered ${plural(_answered, 'question')} and '
-          'got $_correct right ($percent%).'
-          '${_skipped == 0 ? '' : ' $_skipped ${_skipped == 1 ? 'was' : 'were'} "I don\'t know".'}',
+    // The results screen takes this screen's place, so "back" from it
+    // returns to where the practice was started.
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => PracticeResultsScreen(
+          title: widget.title,
+          mode: widget.mode,
+          aiTutor: widget.aiTutor,
+          results: List.of(_results),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
       ),
     );
-    if (mounted) Navigator.pop(context);
   }
 
   @override
