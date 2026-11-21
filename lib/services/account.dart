@@ -122,9 +122,12 @@ class Account extends ChangeNotifier {
 
   /// Puts the app in a signed-in state without a server (tests only).
   @visibleForTesting
-  void signInForTest({String email = 'test@example.com'}) {
+  void signInForTest({
+    String email = 'test@example.com',
+    String userId = 'test-user',
+  }) {
     _email = email;
-    _userId = 'test-user';
+    _userId = userId;
     _accessToken = 'test-token';
     _refreshToken = 'test-refresh';
     _expiresAt = DateTime.now().add(const Duration(hours: 1));
@@ -293,7 +296,9 @@ class Account extends ChangeNotifier {
     await _clear();
     if (token == null) return;
     try {
-      await _post('/logout', const {}, bearer: token);
+      // "local": this phone only. Without it every device signed in to
+      // the account (and the admin site) would be signed out as well.
+      await _post('/logout?scope=local', const {}, bearer: token);
     } catch (_) {
       // Signed out on this phone either way.
     }

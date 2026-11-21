@@ -325,8 +325,43 @@ class QuestionRepository {
   }
 
   /// Deletes a user-made topic with its questions.
+  /// Meta key: ids of the user's own questions deleted on this phone and
+  /// not yet removed from the server (a JSON list).
+  static const String deletedOwnQuestionsKey = 'deleted_own_questions';
+
+  /// Remembers that questions of the user's own were deleted, so the copy
+  /// kept on the server for their other phones goes too.
+  static Future<void> _noteDeleted(Database db, Iterable<String> ids) async {
+    if (ids.isEmpty) return;
+    final rows = await db.query(
+      'meta',
+      where: 'key = ?',
+      whereArgs: [deletedOwnQuestionsKey],
+    );
+    final list = rows.isEmpty
+        ? <dynamic>[]
+        : jsonDecode(rows.first['value'] as String) as List;
+    await db.insert('meta', {
+      'key': deletedOwnQuestionsKey,
+      'value': jsonEncode({...list, ...ids}.toList()),
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    onLocalChange?.call();
+  }
+
   static Future<void> deleteCustomTopic(String topicId) async {
-    await (await _db).delete(
+    final db = await _db;
+    await _noteDeleted(db, [
+      for (final r in await db.query(
+        'questions',
+        columns: ['id'],
+        where:
+            "topic_id = ? AND source IN ('ai', 'user') AND topic_id IN "
+            '(SELECT id FROM topics WHERE is_custom = 1)',
+        whereArgs: [topicId],
+      ))
+        r['id'] as String,
+    ]);
+    await db.delete(
       'topics',
       where: 'id = ? AND is_custom = 1',
       whereArgs: [topicId],
@@ -449,11 +484,17 @@ class QuestionRepository {
   }
 
   static Future<void> deleteQuestion(String questionId) async {
-    await (await _db).delete(
-      'questions',
-      where: 'id = ?',
-      whereArgs: [questionId],
-    );
+    final db = await _db;
+    await _noteDeleted(db, [
+      for (final r in await db.query(
+        'questions',
+        columns: ['id'],
+        where: "id = ? AND source IN ('ai', 'user')",
+        whereArgs: [questionId],
+      ))
+        r['id'] as String,
+    ]);
+    await db.delete('questions', where: 'id = ?', whereArgs: [questionId]);
   }
 
   static Future<void> recordAttempt(

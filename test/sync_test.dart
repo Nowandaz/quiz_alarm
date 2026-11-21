@@ -8,6 +8,7 @@ import 'package:quiz_alarm/data/alarm_log.dart';
 import 'package:quiz_alarm/data/app_database.dart';
 import 'package:quiz_alarm/data/question_repository.dart';
 import 'package:quiz_alarm/models/models.dart';
+import 'package:quiz_alarm/services/account.dart';
 import 'package:quiz_alarm/services/sync_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -28,6 +29,13 @@ class FakeServer {
   };
   final requests = <http.Request>[];
   bool down = false;
+  String acceptUser = 'test-user';
+
+  /// Ids the server says were unpublished or deleted.
+  List<String> withdrawn = [];
+
+  /// A question id the server refuses to store (as a broken row would be).
+  String? refuse;
 
   void unit(String id, {bool premium = false, String? deletedAt}) =>
       tables['units']!.add({
@@ -78,8 +86,23 @@ class FakeServer {
     if (down) throw http.ClientException('offline');
     expect(request.headers['apikey'], isNotEmpty);
     final table = request.url.pathSegments.last;
+    if (table == 'question_tombstones') {
+      return http.Response(
+        jsonEncode([
+          for (final id in withdrawn) {'id': id},
+        ]),
+        200,
+      );
+    }
     final rows = tables[table]!;
     final q = request.url.queryParameters;
+
+    if (request.method == 'DELETE') {
+      expect(q['user_id'], 'eq.test-user');
+      final ids = q['id']!.substring(4, q['id']!.length - 1).split(',');
+      rows.removeWhere((r) => ids.contains(r['id']));
+      return http.Response('', 204);
+    }
 
     if (request.method == 'GET') {
       var out = rows.where((r) {
@@ -92,8 +115,15 @@ class FakeServer {
             return false;
           }
         }
+        if ((q['id'] ?? '').startsWith('gt.') &&
+            '${r['id']}'.compareTo(q['id']!.substring(3)) <= 0) {
+          return false;
+        }
         return true;
       }).toList();
+      if (q['order'] == 'id.asc') {
+        out.sort((a, b) => '${a['id']}'.compareTo('${b['id']}'));
+      }
       final offset = int.parse(q['offset'] ?? '0');
       out = out.skip(offset).take(int.parse(q['limit'] ?? '1000')).toList();
       return http.Response.bytes(utf8.encode(jsonEncode(out)), 200);
@@ -103,9 +133,13 @@ class FakeServer {
     expect(request.headers['Authorization'], 'Bearer test-token');
     final keys = q['on_conflict']!.split(',');
     final keep = request.headers['Prefer']!.contains('ignore-duplicates');
+    final incoming = jsonDecode(request.body) as List;
+    if (refuse != null && incoming.any((r) => (r as Map)['id'] == refuse)) {
+      return http.Response('{"code":"23503"}', 409);
+    }
     for (final row
         in (jsonDecode(request.body) as List).cast<Map<String, dynamic>>()) {
-      expect(row['user_id'], 'test-user');
+      expect(row['user_id'], acceptUser);
       final i = rows.indexWhere((r) => keys.every((k) => r[k] == row[k]));
       if (i == -1) {
         rows.add(row);
@@ -393,6 +427,170 @@ void main() {
         await SyncService.run();
         expect(saved['user_attempts']!.length, attempts);
         expect((await QuestionRepository.getSessions()).length, 1);
+      },
+    );
+  });
+
+  group('review fixes', () {
+    Future<void> ownQuestion(String id, String topicId, String topicName) =>
+        QuestionRepository.addQuestion(
+          Question(
+            id: id,
+            topicId: topicId,
+            topic: topicName,
+            type: QuestionType.saq,
+            questionText: 'Mine $id?',
+            correctAnswer: 'Yes',
+            source: 'ai',
+          ),
+        );
+
+    test('a different account on the phone starts clean; the first '
+        'account\'s history is not handed to it', () async {
+      await start(signedIn: true);
+      final topic = await QuestionRepository.addCustomTopic('Notes');
+      await ownQuestion('ai_a', topic.id, topic.name);
+      await QuestionRepository.recordAttempt(
+        'ai_a',
+        correct: true,
+        mode: 'bank',
+      );
+      await SyncService.run();
+      expect(server.tables['user_attempts']!.length, 1);
+
+      // Someone else signs in on the same phone.
+      Account.instance.signInForTest(
+        email: 'other@example.com',
+        userId: 'user-b',
+      );
+      server.tables.forEach((_, rows) => rows.clear());
+      server.acceptUser = 'user-b';
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      expect(server.tables['user_attempts'], isEmpty);
+      expect(server.tables['user_questions'], isEmpty);
+      expect(await QuestionRepository.findTopicByName('Notes'), isNull);
+    });
+
+    test(
+      'nothing is touched while signed out on a phone that has an account',
+      () async {
+        await start(signedIn: true);
+        server.unit('u1');
+        server.topic('t1', 'u1');
+        server.question('a', 't1');
+        await SyncService.run();
+        Account.instance.resetForTest(); // signed out
+        server.requests.clear();
+        await SyncService.run();
+        expect(server.requests, isEmpty);
+        expect(await localQuestionIds('server'), ['a']);
+      },
+    );
+
+    test(
+      'a topic removed on the server keeps the user\'s own questions',
+      () async {
+        await start(signedIn: true);
+        server.unit('u1');
+        server.topic('t1', 'u1');
+        server.question('a', 't1');
+        await SyncService.run();
+        await ownQuestion('ai_1', 't1', 'Topic t1');
+
+        server.tables['topics']!.single['deleted_at'] = '2026-02-01T00:00:00Z';
+        await SyncService.run();
+        expect(await localQuestionIds('server'), isEmpty);
+        final kept = await QuestionRepository.findTopicByName('Topic t1');
+        expect(kept!.isCustom, isTrue);
+        expect(
+          (await QuestionRepository.getQuestions(kept.id)).single.id,
+          'ai_1',
+        );
+
+        // The admin restores it: its questions return at once, not days later.
+        server.tables['topics']!.single['deleted_at'] = null;
+        await SyncService.run();
+        expect(await localQuestionIds('server'), ['a']);
+      },
+    );
+
+    test('an unpublished question disappears at the next sync', () async {
+      await start();
+      server.unit('u1');
+      server.topic('t1', 'u1');
+      server.question('a', 't1');
+      server.question('b', 't1');
+      await SyncService.run();
+      // Drafts are hidden from phones, so the row itself no longer arrives.
+      server.tables['questions']!.removeWhere((q) => q['id'] == 'a');
+      server.withdrawn = ['a'];
+      await SyncService.run();
+      expect(await localQuestionIds('server'), ['b']);
+    });
+
+    test(
+      'deleting a question of your own removes the server copy too',
+      () async {
+        await start(signedIn: true);
+        final topic = await QuestionRepository.addCustomTopic('Notes');
+        await ownQuestion('ai_x', topic.id, topic.name);
+        await ownQuestion('ai_y', topic.id, topic.name);
+        await SyncService.run();
+        expect(server.tables['user_questions']!.length, 2);
+
+        await QuestionRepository.deleteQuestion('ai_x');
+        await SyncService.run();
+        expect(server.tables['user_questions']!.single['id'], 'ai_y');
+        await QuestionRepository.deleteCustomTopic(topic.id);
+        await SyncService.run();
+        expect(server.tables['user_questions'], isEmpty);
+      },
+    );
+
+    test('one row the server refuses does not hold up the rest', () async {
+      await start(signedIn: true);
+      final topic = await QuestionRepository.addCustomTopic('Notes');
+      await ownQuestion('ai_bad', topic.id, topic.name);
+      await ownQuestion('ai_good', topic.id, topic.name);
+      await QuestionRepository.recordAttempt(
+        'ai_good',
+        correct: true,
+        mode: 'bank',
+      );
+      server.refuse = 'ai_bad';
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      expect(server.tables['user_questions']!.single['id'], 'ai_good');
+      expect(server.tables['user_attempts']!.length, 1);
+      // The refused row is set aside, not sent again every time.
+      server.requests.clear();
+      await SyncService.run();
+      expect(
+        server.requests.where(
+          (r) => r.method == 'POST' && !r.url.path.contains('rpc'),
+        ),
+        isEmpty,
+      );
+    });
+
+    test(
+      'the next download starts from the server\'s clock, not the phone\'s',
+      () async {
+        await start();
+        server.unit('u1');
+        server.topic('t1', 'u1');
+        server.question('a', 't1', updatedAt: '2020-05-05T10:00:00Z');
+        await SyncService.run();
+        server.requests.clear();
+        await SyncService.run();
+        final asked = server.requests.firstWhere(
+          (r) => r.url.path.endsWith('/questions'),
+        );
+        expect(
+          asked.url.queryParameters['updated_at'],
+          'gte.2020-05-05T09:59:00.000Z',
+        );
       },
     );
   });

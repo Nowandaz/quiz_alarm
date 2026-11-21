@@ -57,6 +57,7 @@ class SyncService {
   static const String _bankPlanKey = 'bank_plan';
   static const String _bankFullKey = 'bank_full_at';
   static const String _ownerKey = 'data_owner';
+  static const String _deletedKey = QuestionRepository.deletedOwnQuestionsKey;
   static const Duration _fullEvery = Duration(days: 3);
   static const int _page = 500;
   static const int _chunk = 200;
@@ -92,14 +93,26 @@ class SyncService {
     final problems = <String>[];
     try {
       await QuestionRepository.ensureReady();
+      final db = await AppDatabase.instance;
+      final signedIn = Account.instance.isSignedIn;
+      // Signed out on a phone that holds an account's data: the sign-in
+      // screen is showing. Leave everything exactly as it is (a download
+      // without the account would throw away its premium units).
+      if (!signedIn && await _meta(db, _ownerKey) != null) return;
+
+      if (signedIn && await _adoptOwner()) QuestionService.changes.value++;
+      var bankOk = false;
       try {
         if (await _syncBank(full: fullBank)) QuestionService.changes.value++;
+        bankOk = true;
       } catch (e) {
         problems.add('question bank: ${_short(e)}');
       }
-      if (Account.instance.isSignedIn) {
+      if (signedIn) {
         try {
-          if (await _restoreOnce()) QuestionService.changes.value++;
+          // History is only brought back once the bank is in place:
+          // answers can only be kept for questions the phone has.
+          if (bankOk && await _restoreOnce()) QuestionService.changes.value++;
           await _upload();
         } catch (e) {
           problems.add('your progress: ${_short(e)}');
@@ -159,7 +172,10 @@ class SyncService {
     );
     if (res.statusCode >= 400) {
       debugPrint('Sync: $method $path -> ${res.statusCode} ${res.body}');
-      throw _SyncError('the server answered ${res.statusCode}');
+      throw _SyncError(
+        'the server answered ${res.statusCode}',
+        status: res.statusCode,
+      );
     }
     return res;
   }
@@ -191,23 +207,76 @@ class SyncService {
     }
   }
 
+  /// Every row of a table, fetched in id order, each page starting after
+  /// the last id seen. Unlike [_all] this cannot skip a row when the
+  /// table changes between pages, which matters when "not received" is
+  /// taken to mean "deleted".
+  static Future<List<Map<String, dynamic>>> _allById(
+    String table,
+    Map<String, String> query, {
+    String? token,
+  }) async {
+    final rows = <Map<String, dynamic>>[];
+    String? last;
+    while (true) {
+      final res = await _send(
+        'GET',
+        '/$table',
+        query: {
+          ...query,
+          'order': 'id.asc',
+          'limit': '$_page',
+          'id': ?(last == null ? null : 'gt.$last'),
+        },
+        token: token,
+      );
+      final page = (jsonDecode(utf8.decode(res.bodyBytes)) as List)
+          .cast<Map<String, dynamic>>();
+      if (page.isEmpty) return rows;
+      rows.addAll(page);
+      last = '${page.last['id']}';
+    }
+  }
+
+  /// Sends rows in batches. If the server refuses a batch because of one
+  /// bad row, the rows are sent one by one and [rejected] is told the
+  /// index of each row the server will not take, so that a single bad row
+  /// cannot block everything behind it for ever.
   static Future<void> _upsert(
     String table,
     List<Map<String, Object?>> rows, {
     required String onConflict,
     required String token,
     bool keepExisting = false,
+    Future<void> Function(int index)? rejected,
   }) async {
+    Future<void> post(List<Map<String, Object?>> batch) => _send(
+      'POST',
+      '/$table',
+      query: {'on_conflict': onConflict},
+      body: batch,
+      prefer:
+          'resolution=${keepExisting ? 'ignore' : 'merge'}-duplicates,return=minimal',
+      token: token,
+    );
+    bool refusedRow(Object e) =>
+        e is _SyncError && const {400, 403, 409, 422}.contains(e.status);
+
     for (var i = 0; i < rows.length; i += _chunk) {
-      await _send(
-        'POST',
-        '/$table',
-        query: {'on_conflict': onConflict},
-        body: rows.sublist(i, min(i + _chunk, rows.length)),
-        prefer:
-            'resolution=${keepExisting ? 'ignore' : 'merge'}-duplicates,return=minimal',
-        token: token,
-      );
+      final end = min(i + _chunk, rows.length);
+      try {
+        await post(rows.sublist(i, end));
+      } catch (e) {
+        if (rejected == null || !refusedRow(e)) rethrow;
+        for (var j = i; j < end; j++) {
+          try {
+            await post([rows[j]]);
+          } catch (e) {
+            if (!refusedRow(e)) rethrow;
+            await rejected(j);
+          }
+        }
+      }
     }
   }
 
@@ -248,6 +317,11 @@ class SyncService {
   static Future<bool> _syncBank({required bool full}) async {
     final db = await AppDatabase.instance;
     final token = await Account.instance.accessToken();
+    // Signed in but the sign-in could not be confirmed right now: do not
+    // download as a stranger, that would drop the account's premium units.
+    if (token == null && Account.instance.isSignedIn) {
+      throw const _SyncError('no connection');
+    }
 
     var premium = false;
     if (token != null) {
@@ -279,35 +353,55 @@ class SyncService {
         DateTime.now().difference(lastFull) > _fullEvery;
 
     final startedAt = DateTime.now().toUtc();
-    final units = await _all(
-      'units',
-      {'select': '*'},
-      order: 'id',
-      token: token,
-    );
-    final topics = await _all(
-      'topics',
-      {'select': '*'},
-      order: 'id',
-      token: token,
-    );
-    final questions = await _all(
-      'questions',
-      {
-        'select':
-            'id,topic_id,type,text,options,answer,alt_answers,explanation,'
-            'image_path,status,deleted_at,updated_at',
-        if (!full) 'updated_at': 'gte.$since',
-      },
-      order: 'updated_at.asc,id.asc',
-      token: token,
-    );
+    final units = await _allById('units', {'select': '*'}, token: token);
+    final topics = await _allById('topics', {'select': '*'}, token: token);
+    const columns =
+        'id,topic_id,type,text,options,answer,alt_answers,explanation,'
+        'image_path,status,deleted_at,updated_at';
+    final questions = full
+        ? await _allById('questions', {'select': columns}, token: token)
+        : await _all(
+            'questions',
+            {'select': columns, 'updated_at': 'gte.$since'},
+            order: 'updated_at.asc,id.asc',
+            token: token,
+          );
+    // Questions that were unpublished or deleted: a phone is not allowed to
+    // read those rows any more, so the server lists their ids separately.
+    var withdrawn = const <String>[];
+    if (!full) {
+      try {
+        final res = await _send(
+          'POST',
+          '/rpc/question_tombstones',
+          body: {'since': since},
+          token: token,
+        );
+        withdrawn = [
+          for (final r in jsonDecode(utf8.decode(res.bodyBytes)) as List)
+            '${(r as Map)['id']}',
+        ];
+      } on _SyncError catch (e) {
+        debugPrint('No list of withdrawn questions: $e');
+      }
+    }
+    // The newest change received. The next download asks for changes
+    // since then, by the server's clock rather than the phone's.
+    DateTime? newest;
+    for (final q in questions) {
+      final t = DateTime.tryParse('${q['updated_at'] ?? ''}');
+      if (t != null && (newest == null || t.isAfter(newest))) newest = t;
+    }
     // Nothing sensible came back (an empty or broken project): keep what
     // the phone has rather than wiping the bank.
     if (units.isEmpty) return false;
 
     final folder = kIsWeb ? null : await pictureFolder();
     var changed = false;
+    // A unit or topic that is live on the server but new to this phone
+    // (restored by an admin, or no longer premium): its questions did not
+    // change, so only a full comparison brings them.
+    var needFull = false;
     final pictures = <String, String>{}; // question id -> web address
 
     await db.transaction((txn) async {
@@ -316,11 +410,15 @@ class SyncService {
         final id = u['id'] as String;
         if (id == QuestionRepository.customUnitId) continue;
         if (u['deleted_at'] != null || (u['premium'] == true && !premium)) {
-          changed |=
-              await txn.delete('units', where: 'id = ?', whereArgs: [id]) > 0;
+          changed |= await _retireUnit(txn, id);
           continue;
         }
         liveUnits.add(id);
+        needFull |= (await txn.query(
+          'units',
+          where: 'id = ?',
+          whereArgs: [id],
+        )).isEmpty;
         await txn.rawInsert(
           'INSERT INTO units(id, name, description, sort_order) VALUES(?,?,?,?) '
           'ON CONFLICT(id) DO UPDATE SET name = excluded.name, '
@@ -333,21 +431,20 @@ class SyncService {
       for (final t in topics) {
         final id = t['id'] as String;
         if (t['deleted_at'] != null || !liveUnits.contains(t['unit_id'])) {
-          changed |=
-              await txn.delete(
-                'topics',
-                where: 'id = ? AND is_custom = 0',
-                whereArgs: [id],
-              ) >
-              0;
+          changed |= await _retireTopic(txn, id);
           continue;
         }
+        needFull |= (await txn.query(
+          'topics',
+          where: 'id = ? AND is_custom = 0',
+          whereArgs: [id],
+        )).isEmpty;
         liveTopics.add(id);
         await txn.rawInsert(
           'INSERT INTO topics(id, unit_id, name, sort_order, is_custom) '
           'VALUES(?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET '
           'unit_id = excluded.unit_id, name = excluded.name, '
-          'sort_order = excluded.sort_order',
+          'sort_order = excluded.sort_order, is_custom = 0',
           [id, t['unit_id'], t['name'], t['sort_order'] ?? 0],
         );
       }
@@ -406,28 +503,28 @@ class SyncService {
         changed = true;
       }
 
+      for (final id in withdrawn) {
+        changed |=
+            await txn.delete(
+              'questions',
+              where: "id = ? AND source IN ('seed', 'server')",
+              whereArgs: [id],
+            ) >
+            0;
+      }
       if (full) {
         changed |= await txn.delete('questions', where: "source = 'stale'") > 0;
-        // Curated topics and units the server no longer has, unless the
-        // user's own questions still live in them.
+        // Curated topics and units the server no longer has.
         for (final row in await txn.query('topics', where: 'is_custom = 0')) {
           if (liveTopics.contains(row['id'])) continue;
-          await txn.rawDelete(
-            'DELETE FROM topics WHERE id = ? AND id NOT IN '
-            '(SELECT DISTINCT topic_id FROM questions)',
-            [row['id']],
-          );
+          changed |= await _retireTopic(txn, row['id'] as String);
         }
         for (final row in await txn.query('units')) {
           final id = row['id'] as String;
           if (liveUnits.contains(id) || id == QuestionRepository.customUnitId) {
             continue;
           }
-          await txn.rawDelete(
-            'DELETE FROM units WHERE id = ? AND id NOT IN '
-            '(SELECT DISTINCT unit_id FROM topics)',
-            [id],
-          );
+          changed |= await _retireUnit(txn, id);
         }
         await _setMeta(txn, _bankFullKey, startedAt.toIso8601String());
       }
@@ -435,10 +532,16 @@ class SyncService {
       await _setMeta(
         txn,
         QuestionRepository.bankSyncedKey,
-        // A minute of overlap covers clocks that disagree slightly.
-        startedAt.subtract(const Duration(minutes: 1)).toIso8601String(),
+        // A minute of overlap, so nothing saved in the same moment is lost.
+        (newest?.subtract(const Duration(minutes: 1)) ??
+                DateTime.tryParse(since ?? '') ??
+                startedAt.subtract(const Duration(days: 1)))
+            .toUtc()
+            .toIso8601String(),
       );
     });
+
+    if (needFull && !full) return await _syncBank(full: true) || changed;
 
     // Pictures are saved on the phone so spotter questions work offline.
     for (final entry in pictures.entries) {
@@ -463,6 +566,106 @@ class SyncService {
       }
     }
     return changed;
+  }
+
+  /// Removes a curated topic the server no longer offers. Questions the
+  /// user owns (written by the AI for them, or their own) are not thrown
+  /// away with it: the topic then stays as one of the user's own topics,
+  /// holding just those. Returns true if anything changed.
+  static Future<bool> _retireTopic(Transaction txn, String id) async {
+    final mine = Sqflite.firstIntValue(
+      await txn.rawQuery(
+        'SELECT COUNT(*) FROM questions q JOIN topics t ON t.id = q.topic_id '
+        "WHERE t.id = ? AND t.is_custom = 0 AND q.source IN ('ai', 'user')",
+        [id],
+      ),
+    );
+    if ((mine ?? 0) == 0) {
+      return await txn.delete(
+            'topics',
+            where: 'id = ? AND is_custom = 0',
+            whereArgs: [id],
+          ) >
+          0;
+    }
+    await txn.delete(
+      'questions',
+      where: "topic_id = ? AND source NOT IN ('ai', 'user')",
+      whereArgs: [id],
+    );
+    await txn.rawInsert(
+      'INSERT OR IGNORE INTO units(id, name, description, sort_order) '
+      "VALUES(?, 'My topics', 'Topics you added yourself', 1000)",
+      [QuestionRepository.customUnitId],
+    );
+    await txn.update(
+      'topics',
+      {'unit_id': QuestionRepository.customUnitId, 'is_custom': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    return true;
+  }
+
+  static Future<bool> _retireUnit(Transaction txn, String id) async {
+    var changed = false;
+    for (final row in await txn.query(
+      'topics',
+      columns: ['id'],
+      where: 'unit_id = ?',
+      whereArgs: [id],
+    )) {
+      changed |= await _retireTopic(txn, row['id'] as String);
+    }
+    // Topics the user made inside this unit move to "My topics" as well.
+    final moved = await txn.update(
+      'topics',
+      {'unit_id': QuestionRepository.customUnitId},
+      where: 'unit_id = ?',
+      whereArgs: [id],
+    );
+    if (moved > 0) {
+      await txn.rawInsert(
+        'INSERT OR IGNORE INTO units(id, name, description, sort_order) '
+        "VALUES(?, 'My topics', 'Topics you added yourself', 1000)",
+        [QuestionRepository.customUnitId],
+      );
+    }
+    return await txn.delete('units', where: 'id = ?', whereArgs: [id]) > 0 ||
+        changed;
+  }
+
+  /// Whose data this phone holds. The first account to sign in takes over
+  /// whatever was recorded before. If a DIFFERENT account signs in later,
+  /// the previous person's history is cleared from the phone (it stays
+  /// safe on the server under their account) and the new account's own
+  /// history is fetched. Alarms stay: they belong to the phone.
+  /// Returns true if history was cleared.
+  static Future<bool> _adoptOwner() async {
+    final uid = Account.instance.userId;
+    if (uid == null) return false;
+    final db = await AppDatabase.instance;
+    final owner = await _meta(db, _ownerKey);
+    if (owner == uid) return false;
+    if (owner == null) {
+      await _setMeta(db, _ownerKey, uid);
+      return false;
+    }
+    await db.transaction((txn) async {
+      await txn.delete('attempts');
+      await txn.delete('sessions');
+      await txn.delete('alarm_events');
+      await txn.delete('questions', where: "source IN ('ai', 'user')");
+      await txn.rawDelete(
+        'DELETE FROM topics WHERE is_custom = 1 AND id NOT IN '
+        '(SELECT DISTINCT topic_id FROM questions)',
+      );
+      await txn.delete('meta', where: 'key = ?', whereArgs: ['restored:$uid']);
+      await txn.delete('meta', where: 'key = ?', whereArgs: [_deletedKey]);
+      await _setMeta(txn, _ownerKey, uid);
+    });
+    (await SharedPreferences.getInstance()).remove(_backupPref);
+    return true;
   }
 
   static Future<Directory?> _defaultPictureFolder() async {
@@ -503,22 +706,19 @@ class SyncService {
 
   // ------------------------------------------------------- progress (up)
 
+  /// Marks a row the server refuses to take, so it is not sent again and
+  /// again (2 = set aside).
+  static Future<void> _setAside(Database db, String table, Object? id) async {
+    debugPrint('Sync: the server refused a row of $table (id $id)');
+    await db.update(table, {'synced': 2}, where: 'id = ?', whereArgs: [id]);
+  }
+
   static Future<void> _upload() async {
     final token = await Account.instance.accessToken();
     final uid = Account.instance.userId;
     if (token == null || uid == null) throw const _SyncError('no connection');
     final db = await AppDatabase.instance;
 
-    // Someone else's account on this phone: everything goes to theirs too.
-    if (await _meta(db, _ownerKey) != uid) {
-      await db.transaction((txn) async {
-        await txn.rawUpdate('UPDATE sessions SET synced = 0');
-        await txn.rawUpdate('UPDATE attempts SET synced = 0');
-        await txn.rawUpdate('UPDATE questions SET synced = 0');
-        await txn.rawUpdate('UPDATE alarm_events SET synced = 0');
-        await _setMeta(txn, _ownerKey, uid);
-      });
-    }
     for (final table in const ['sessions', 'attempts']) {
       for (final row in await db.query(
         table,
@@ -562,6 +762,7 @@ class SyncService {
             'created_at': _iso(q['created_at']),
           },
       ],
+      rejected: (i) => _setAside(db, 'questions', ownQuestions[i]['id']),
       onConflict: 'user_id,id',
       token: token,
     );
@@ -569,12 +770,34 @@ class SyncService {
       await db.update(
         'questions',
         {'synced': 1},
-        where: 'id = ?',
+        where: 'id = ? AND synced = 0',
         whereArgs: [q['id']],
       );
     }
 
-    // 2. Sessions. One still in progress is sent again when it ends.
+    // Questions of their own that the user deleted on this phone.
+    final gone = (jsonDecode(await _meta(db, _deletedKey) ?? '[]') as List)
+        .map((e) => '$e')
+        .where((id) => RegExp(r'^[A-Za-z0-9_.:-]+$').hasMatch(id))
+        .toList();
+    for (var i = 0; i < gone.length; i += 50) {
+      await _send(
+        'DELETE',
+        '/user_questions',
+        query: {
+          'user_id': 'eq.$uid',
+          'id': 'in.(${gone.sublist(i, min(i + 50, gone.length)).join(',')})',
+        },
+        prefer: 'return=minimal',
+        token: token,
+      );
+    }
+    if (gone.isNotEmpty) {
+      await db.delete('meta', where: 'key = ?', whereArgs: [_deletedKey]);
+    }
+
+    // 2. Sessions. One still in progress is sent again when it ends
+    // (ending it marks it as changed).
     final sessions = await db.query('sessions', where: 'synced = 0');
     await _upsert(
       'user_sessions',
@@ -600,15 +823,15 @@ class SyncService {
                 : null,
           },
       ],
+      rejected: (i) => _setAside(db, 'sessions', sessions[i]['id']),
       onConflict: 'id',
       token: token,
     );
     for (final s in sessions) {
-      if (s['ended_at'] == null) continue;
       await db.update(
         'sessions',
         {'synced': 1},
-        where: 'id = ?',
+        where: 'id = ? AND synced = 0',
         whereArgs: [s['id']],
       );
     }
@@ -636,13 +859,14 @@ class SyncService {
       ],
       onConflict: 'user_id,client_id',
       keepExisting: true,
+      rejected: (i) => _setAside(db, 'attempts', attempts[i]['id']),
       token: token,
     );
     for (final a in attempts) {
       await db.update(
         'attempts',
         {'synced': 1},
-        where: 'id = ?',
+        where: 'id = ? AND synced = 0',
         whereArgs: [a['id']],
       );
     }
@@ -675,13 +899,14 @@ class SyncService {
         ],
         onConflict: 'user_id,client_id',
         keepExisting: true,
+        rejected: (i) => _setAside(db, 'alarm_events', events[i]['id']),
         token: token,
       );
       for (final e in events) {
         await db.update(
           'alarm_events',
           {'synced': 1},
-          where: 'id = ?',
+          where: 'id = ? AND synced = 0',
           whereArgs: [e['id']],
         );
       }
@@ -827,7 +1052,6 @@ class SyncService {
         ['alarm'],
       );
       await _setMeta(txn, doneKey, DateTime.now().toIso8601String());
-      await _setMeta(txn, _ownerKey, uid);
     });
 
     // Alarms come back only onto a phone that has none, and switched off:
@@ -859,7 +1083,8 @@ class SyncService {
 
 class _SyncError implements Exception {
   final String message;
-  const _SyncError(this.message);
+  final int? status;
+  const _SyncError(this.message, {this.status});
   @override
   String toString() => message;
 }
