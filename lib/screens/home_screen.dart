@@ -153,7 +153,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final status = await Billing.checkPending();
       if (!mounted || status == null || !status.paid) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Payment received. You are on premium.')),
+        SnackBar(
+          content: Text('Payment received. You are on ${status.planName}.'),
+        ),
       );
     } catch (e) {
       debugPrint('Could not check the payment: $e');
