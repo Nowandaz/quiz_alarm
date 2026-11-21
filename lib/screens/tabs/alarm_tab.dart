@@ -29,6 +29,10 @@ class _AlarmTabState extends State<AlarmTab> {
   // Alarms ticked for deletion. Long-press an alarm to start selecting.
   final Set<int> _selected = {};
 
+  // Below this height of the tab the "Add alarm" button stops floating
+  // over the list (see build).
+  static const double _shortScreen = 600;
+
   void _toggle(int id) => setState(() {
     if (!_selected.remove(id)) _selected.add(id);
   });
@@ -74,6 +78,29 @@ class _AlarmTabState extends State<AlarmTab> {
     return best;
   }
 
+  /// The switch on a card: says what happened once the phone has been
+  /// told, so the user knows the alarm really is set (and for when).
+  Future<void> _setEnabled(AlarmProvider provider, AlarmItem card, bool on) {
+    final messenger = ScaffoldMessenger.of(context);
+    final use24 = context.read<ThemeProvider>().use24Hour;
+    return provider.setEnabled(card, on).then((_) {
+      // The card may hold the alarm as it was before an edit.
+      final alarm = provider.alarms.where((a) => a.id == card.id).firstOrNull;
+      if (alarm == null) return; // deleted meanwhile
+      final next = on ? provider.nextRing(alarm) : null;
+      final text = !on
+          ? 'Alarm off'
+          : next == null
+          ? 'Alarm on'
+          : describeAlarmSet(next, DateTime.now(), use24Hour: use24);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(duration: const Duration(seconds: 3), content: Text(text)),
+        );
+    });
+  }
+
   void _openEditor(BuildContext context, [AlarmItem? alarm]) {
     Navigator.push(
       context,
@@ -101,14 +128,29 @@ class _AlarmTabState extends State<AlarmTab> {
           onPopInvokedWithResult: (didPop, _) {
             if (!didPop) setState(_selected.clear);
           },
-          child: Stack(
-            children: [
-              ListView(
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final safeBottom = MediaQuery.paddingOf(context).bottom;
+              final showAdd = provider.alarms.isNotEmpty && !selecting;
+              // On a short screen the clock card and the "Your alarms" row
+              // fill the whole view, so a floating button would sit on the
+              // row and take its taps. There it gets a strip of its own
+              // under the list instead.
+              final docked = box.maxHeight < _shortScreen;
+              final addButton = PrimaryButton(
+                key: TourKeys.addAlarm,
+                icon: Icons.add_rounded,
+                label: 'Add alarm',
+                onPressed: () => _openEditor(context),
+              );
+              final list = ListView(
                 padding: EdgeInsets.fromLTRB(
                   16,
                   6,
                   16,
-                  90 + MediaQuery.paddingOf(context).bottom,
+                  // Room to scroll the last card clear of the floating
+                  // button (12 below it + 56 tall + a gap above).
+                  showAdd ? (docked ? 16 : 96 + safeBottom) : 24 + safeBottom,
                 ),
                 children: [
                   if (!provider.backend.isSimulated) const AlarmHealthBanner(),
@@ -167,7 +209,12 @@ class _AlarmTabState extends State<AlarmTab> {
                                     child: Text(
                                       next == null
                                           ? 'No alarm is switched on'
-                                          : 'Next alarm '
+                                          // Which ring is next, then how
+                                          // long until it.
+                                          : 'Next: '
+                                                '${DateFormat('EEE').format(next.$2)} '
+                                                '${formatClock(next.$2, use24Hour: use24)}'
+                                                ' \u00b7 '
                                                 '${describeTimeUntil(next.$2, now)}',
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
@@ -280,7 +327,15 @@ class _AlarmTabState extends State<AlarmTab> {
                             ? () => _toggle(a.id)
                             : () => _openEditor(context, a),
                         snoozedUntil: provider.snoozedUntil(a),
-                        onToggle: (v) => provider.setEnabled(a, v),
+                        nextRing: a.isEnabled
+                            ? provider.nextRing(a) ??
+                                  calculateNextTrigger(
+                                    a.time,
+                                    a.activeDays,
+                                    DateTime.now(),
+                                  )
+                            : null,
+                        onToggle: (v) => _setEnabled(provider, a, v),
                         onRingNow: () {
                           provider.ringSoon(a);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -294,20 +349,36 @@ class _AlarmTabState extends State<AlarmTab> {
                     ),
                   ),
                 ],
-              ),
-              if (provider.alarms.isNotEmpty && !selecting)
-                Positioned(
-                  right: 16,
-                  // Sits just above the navigation bar on every screen size.
-                  bottom: 12 + MediaQuery.paddingOf(context).bottom,
-                  child: PrimaryButton(
-                    key: TourKeys.addAlarm,
-                    icon: Icons.add_rounded,
-                    label: 'Add Alarm',
-                    onPressed: () => _openEditor(context),
+              );
+              // The same widgets around the list in every case, so it keeps
+              // its scroll position when the button comes or goes.
+              return Column(
+                children: [
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        list,
+                        if (showAdd && !docked)
+                          Positioned(
+                            right: 16,
+                            // Sits just above the navigation bar.
+                            bottom: 12 + safeBottom,
+                            child: addButton,
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-            ],
+                  if (showAdd && docked)
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(16, 6, 16, 8 + safeBottom),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: addButton,
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         );
       },
@@ -407,7 +478,7 @@ class _EmptyAlarms extends StatelessWidget {
             const SizedBox(height: 16),
             PrimaryButton(
               icon: Icons.add_rounded,
-              label: 'Add Alarm',
+              label: 'Add alarm',
               onPressed: onAdd,
             ),
           ],
@@ -432,6 +503,9 @@ class _AlarmCard extends StatelessWidget {
   /// When a running snooze of this alarm will ring, if there is one.
   final DateTime? snoozedUntil;
 
+  /// When this alarm rings next, while it is switched on.
+  final DateTime? nextRing;
+
   const _AlarmCard({
     required this.onLongPress,
     required this.selecting,
@@ -444,6 +518,7 @@ class _AlarmCard extends StatelessWidget {
     required this.onToggle,
     required this.onRingNow,
     this.snoozedUntil,
+    this.nextRing,
   });
 
   @override
@@ -555,7 +630,14 @@ class _AlarmCard extends StatelessWidget {
                 Row(
                   children: [
                     if (a.activeDays.isEmpty)
-                      const Pill('Once', icon: Icons.looks_one_rounded)
+                      // "Once" alone does not say which day it rings.
+                      Pill(
+                        nextRing == null
+                            ? 'Once'
+                            : 'Once \u00b7 '
+                                  '${describeDay(nextRing!, DateTime.now())}',
+                        icon: Icons.looks_one_rounded,
+                      )
                     else
                       for (var d = 1; d <= 7; d++)
                         Container(

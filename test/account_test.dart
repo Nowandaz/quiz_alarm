@@ -60,6 +60,35 @@ void main() {
     expect(account.isSignedIn, isFalse);
   });
 
+  test('forgot password asks the server to email a reset link', () async {
+    Account.httpClient = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, '/auth/v1/recover');
+      expect(
+        request.url.queryParameters['redirect_to'],
+        'https://amkausome.onrender.com',
+      );
+      expect(jsonDecode(request.body), {'email': 'me@example.com'});
+      return http.Response('{}', 200);
+    });
+    expect(await account.resetPassword(' me@example.com '), isNull);
+    expect(account.isSignedIn, isFalse);
+
+    // A refusal and a dead connection both come back as a sentence.
+    Account.httpClient = MockClient(
+      (_) async => http.Response(
+        '{"code":429,"error_code":"over_email_send_rate_limit","msg":"wait"}',
+        429,
+      ),
+    );
+    expect(await account.resetPassword('me@example.com'), isNotEmpty);
+    Account.httpClient = MockClient((_) async => throw Exception('offline'));
+    expect(
+      await account.resetPassword('me@example.com'),
+      contains('connection'),
+    );
+  });
+
   test('no connection is reported, not thrown', () async {
     Account.httpClient = MockClient((_) async => throw Exception('offline'));
     expect(

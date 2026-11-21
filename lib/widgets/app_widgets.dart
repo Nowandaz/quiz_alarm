@@ -224,6 +224,14 @@ class ProgressRing extends StatelessWidget {
   }
 }
 
+/// A count with its word: "1 topic", "2 topics", "0 questions".
+String plural(int n, String word) => '$n $word${n == 1 ? '' : 's'}';
+
+/// Shown wherever an AI feature is used while signed out (the sign-in
+/// lapsed, or the guest emulator). One sentence everywhere.
+const String signInForAi =
+    'Sign in to use the AI. Open Settings from the Alarms tab.';
+
 /// Greeting for [hour] (0-23): good morning / afternoon / evening / night,
 /// and between midnight and 5 AM "night owl" or, when [waking] (an alarm
 /// was just dismissed), "early bird".

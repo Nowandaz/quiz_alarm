@@ -449,7 +449,7 @@ class _SessionCard extends StatelessWidget {
         subtitle: Text(
           '${DateFormat('EEE d MMM').format(s.startedAt)}, '
           '${formatClock(s.startedAt, use24Hour: context.watch<ThemeProvider>().use24Hour)}\n'
-          '${parts.join(' - ')}',
+          '${parts.join(' \u00b7 ')}',
           style: theme.textTheme.bodySmall,
         ),
         isThreeLine: true,

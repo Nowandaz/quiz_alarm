@@ -1,9 +1,10 @@
 /// The user's account: signing up, signing in and out, and keeping the
 /// sign-in alive. Talks to Supabase's sign-in service directly over HTTPS.
 ///
-/// The app works without an account (alarms and the built-in question
-/// bank are offline). An account is needed for anything the server does:
-/// the AI today, and syncing and paid features later.
+/// An account is required to use the app (the sign-in screen comes first).
+/// Alarms that are already set still ring without one, and without
+/// internet. The account is what the server knows the user by: syncing
+/// progress, the AI, and paid features later.
 library;
 
 import 'dart:async';
@@ -209,6 +210,23 @@ class Account extends ChangeNotifier {
       if (res.statusCode != 200) return _reason(res);
       await _adopt(jsonDecode(utf8.decode(res.bodyBytes)));
       return null;
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
+  // The web page the emailed "set a new password" link opens.
+  static const String _resetPage = 'https://amkausome.onrender.com';
+
+  /// Emails a link for setting a new password. Null on success,
+  /// otherwise a sentence to show.
+  Future<String?> resetPassword(String email) async {
+    try {
+      final res = await _post(
+        '/recover?redirect_to=${Uri.encodeQueryComponent(_resetPage)}',
+        {'email': email.trim()},
+      );
+      return res.statusCode == 200 ? null : _reason(res);
     } catch (e) {
       return _network(e);
     }

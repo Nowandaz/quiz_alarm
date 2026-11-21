@@ -63,7 +63,8 @@ class UnitScreen extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        '${topics.length} topics \u00b7 $total questions',
+                        '${plural(topics.length, 'topic')} \u00b7 '
+                        '${plural(total, 'question')}',
                         style: theme.textTheme.bodyMedium,
                       ),
                     ),
@@ -175,7 +176,8 @@ class TopicCard extends StatelessWidget {
                       Text(
                         stats.total == 0
                             ? 'No questions yet'
-                            : '${stats.total} questions \u00b7 ${stats.seen} answered \u00b7 '
+                            : '${plural(stats.total, 'question')} \u00b7 '
+                                  '${stats.seen} answered \u00b7 '
                                   '${stats.mastered} correct',
                         style: theme.textTheme.bodySmall,
                       ),

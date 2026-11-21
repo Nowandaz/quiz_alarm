@@ -1,7 +1,7 @@
 // Drives the mini emulator from the command line (needs Node + Playwright).
 // The app keeps its data between runs in tool/emulator/.profile.
 //
-//   node tool/emulator/drive.js [--url URL] [--fresh] step step ...
+//   node tool/emulator/drive.js [--url URL] [--fresh] [--size 320x568] step step ...
 //
 // Steps:
 //   tap:Text        tap the button / tab / item whose label contains Text
@@ -27,15 +27,19 @@ const { chromium } = require('playwright');
   const args = process.argv.slice(2);
   let url = 'http://localhost:8090/';
   const profile = path.join(__dirname, '.profile');
+  let size = { width: 412, height: 892 }; // --size WxH tries a smaller phone
   const steps = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--url') url = args[++i];
-    else if (args[i] === '--fresh') fs.rmSync(profile, { recursive: true, force: true });
+    else if (args[i] === '--size') {
+      const [w, h] = args[++i].split('x').map(Number);
+      size = { width: w, height: h };
+    } else if (args[i] === '--fresh') fs.rmSync(profile, { recursive: true, force: true });
     else steps.push(args[i]);
   }
 
   const ctx = await chromium.launchPersistentContext(profile, {
-    viewport: { width: 412, height: 892 },
+    viewport: size,
     deviceScaleFactor: 2,
     args: ['--autoplay-policy=no-user-gesture-required'],
   });

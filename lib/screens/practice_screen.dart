@@ -82,6 +82,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   int _answered = 0;
   int _correct = 0;
+  int _skipped = 0; // answered with "I don't know"
 
   @override
   void initState() {
@@ -94,6 +95,13 @@ class _PracticeScreenState extends State<PracticeScreen> {
   late int? _limit = widget.limit;
 
   bool get _limitReached => _limit != null && _answered >= _limit!;
+
+  /// Number of the question on screen (1 = first). Once it is answered it
+  /// is already counted in [_answered].
+  int get _number {
+    final n = _phase == _Phase.answered ? _answered : _answered + 1;
+    return n.clamp(1, _limit ?? n);
+  }
 
   /// True when there is nothing more to ask after the current question.
   bool get _isLast =>
@@ -202,6 +210,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _phase = _Phase.answered;
       _answered++;
       if (verdict) _correct++;
+      if (answer.trim().isEmpty) _skipped++;
     });
     _session ??= QuestionRepository.startSession(widget.mode, widget.title);
     _sessionId = await _session;
@@ -258,8 +267,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Session finished'),
         content: Text(
-          'You answered $_answered question${_answered == 1 ? '' : 's'} and '
-          'got $_correct right ($percent%).',
+          'You answered ${plural(_answered, 'question')} and '
+          'got $_correct right ($percent%).'
+          '${_skipped == 0 ? '' : ' $_skipped ${_skipped == 1 ? 'was' : 'were'} "I don\'t know".'}',
         ),
         actions: [
           TextButton(
@@ -282,9 +292,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
             child: Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Text(
+                // The question on screen, not how many are answered: the
+                // first one reads "Question 1 of 5".
                 _limit == null
                     ? '$_correct / $_answered'
-                    : '$_answered / $_limit',
+                    : 'Question $_number of $_limit',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -308,7 +320,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
             padding: EdgeInsets.all(32),
             child: Text(
               'There are no questions for this selection yet.\n\n'
-              'Open the topic in Question Banks and tap "Generate with AI", '
+              'Open the topic in Question Banks and tap "Generate 5 with AI", '
               'or pick other topics.',
               textAlign: TextAlign.center,
             ),
@@ -657,8 +669,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
           )
         else if (!hasExplanation)
           Text(
-            'No explanation is saved for this question. Sign in from Settings '
-            'to get one from the AI tutor.',
+            'No explanation is saved for this question. $signInForAi',
             style: Theme.of(context).textTheme.bodySmall,
           ),
       ],

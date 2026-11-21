@@ -16,6 +16,7 @@ import '../services/question_service.dart';
 import '../services/sync_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
+import '../widgets/app_widgets.dart';
 import 'account_screen.dart';
 import 'alarm_feedback.dart';
 
@@ -126,10 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _generating = true);
     if (!AiClient.available) {
       setState(() => _generating = false);
-      _dialog(
-        'Sign in needed',
-        'Sign in above to have the AI write questions.',
-      );
+      _dialog('Sign in needed', 'Sign in to use the AI.');
       return;
     }
     final result = await QuestionService.topUp(const [], targetUnseen: 1 << 30);
@@ -140,13 +138,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (result.error != null) {
       _dialog(
         'Generation failed',
-        '${result.added > 0 ? 'Added ${result.added} question(s), then:\n\n' : ''}'
+        '${result.added > 0 ? 'Added ${plural(result.added, 'question')}, then:\n\n' : ''}'
             '${result.error}',
       );
     } else {
       _dialog(
         'Questions added',
-        'Added ${result.added} new question(s). They are in Question Banks, '
+        'Added ${plural(result.added, 'new question')}. They are in '
+            'Question Banks, '
             'marked "AI generated".',
       );
     }
@@ -175,7 +174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: Column(
               children: [
                 SwitchListTile(
-                  title: const Text('Dark Theme'),
+                  title: const Text('Dark theme'),
                   secondary: Icon(
                     isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
                   ),
@@ -307,8 +306,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Text('Account', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-            'Alarms and the built-in questions work without an account. '
-            'Signing in keeps your progress safe and turns on the AI.',
+            'Your account keeps your progress safe and turns on the AI.',
             style: small,
           ),
           const SizedBox(height: 8),

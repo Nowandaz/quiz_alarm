@@ -241,6 +241,16 @@ Future<void> showAlarmFeedback(
                           ),
                         ),
                         const SizedBox(height: 8),
+                        // Says why Send is greyed out.
+                        if (problem == null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Text(
+                              'Choose what happened to send the report',
+                              textAlign: TextAlign.center,
+                              style: muted,
+                            ),
+                          ),
                         FilledButton(
                           onPressed: problem == null
                               ? null
@@ -288,8 +298,10 @@ Future<void> showAlarmFeedback(
     },
   );
   messenger.showSnackBar(
+    // The report is stored first and uploaded later, so "sent" would
+    // not be true without a connection.
     const SnackBar(
-      content: Text('Report sent. Thank you, we will look into it.'),
+      content: Text('Report saved. It is sent as soon as the phone is online.'),
     ),
   );
 }

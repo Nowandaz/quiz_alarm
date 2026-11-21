@@ -264,14 +264,15 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                           ),
                         ),
                       ),
-                      if (_wrongStreak >= _wrongForSnooze)
+                      // Filled, so it is easy to find half asleep. Gone once
+                      // the alarm is snoozed or off (the "done" view).
+                      if (_wrongStreak >= _wrongForSnooze &&
+                          _phase != _Phase.done)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white70,
-                              side: const BorderSide(color: Colors.white70),
-                              minimumSize: const Size.fromHeight(48),
+                          child: FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
                             ),
                             onPressed: () => _finish('snooze'),
                             icon: const Icon(Icons.snooze),
@@ -348,13 +349,6 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close, size: 18),
                 label: const Text('Close test'),
-              )
-            else
-              Text(
-                'Wrong: $_wrongStreak / $_wrongForSnooze',
-                style: TextStyle(
-                  color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
-                ),
               ),
           ],
         ),
@@ -368,17 +362,21 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             backgroundColor: Colors.white12,
           ),
         ),
-        if (widget.preview)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              'Wrong: $_wrongStreak / $_wrongForSnooze',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
-              ),
+        // Says what the wrong answers are counted for.
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            _wrongStreak >= _wrongForSnooze
+                ? 'Snooze is unlocked'
+                : 'Snooze unlocks after $_wrongForSnooze wrong in a row '
+                      '($_wrongStreak so far)',
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
+              fontSize: 13,
             ),
           ),
+        ),
       ],
     );
   }
@@ -585,6 +583,11 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          // The picture the question was about, so the review makes sense.
+          if (q.image.isNotEmpty) ...[
+            QuestionImage(q.image, maxHeight: 160),
+            const SizedBox(height: 12),
+          ],
           Text(
             q.questionText,
             style: const TextStyle(color: Colors.white70, fontSize: 15),

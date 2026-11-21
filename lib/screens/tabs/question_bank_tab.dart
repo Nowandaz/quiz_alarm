@@ -21,6 +21,7 @@ Future<void> showAddTopicDialog(BuildContext context) async {
   final nameCtrl = TextEditingController();
   final aboutCtrl = TextEditingController();
   String unitId = QuestionRepository.customUnitId;
+  String? nameError; // shown under the name field after an empty Add
   final created = await showDialog<Topic>(
     context: context,
     builder: (ctx) => StatefulBuilder(
@@ -35,9 +36,16 @@ Future<void> showAddTopicDialog(BuildContext context) async {
                 controller: nameCtrl,
                 autofocus: true,
                 textCapitalization: TextCapitalization.sentences,
-                decoration: const InputDecoration(
+                // Typing again clears the "enter a name" error.
+                onChanged: (_) {
+                  if (nameError != null) {
+                    setDialogState(() => nameError = null);
+                  }
+                },
+                decoration: InputDecoration(
                   labelText: 'Topic name',
                   hintText: 'e.g. Antimalarial drugs',
+                  errorText: nameError,
                 ),
               ),
               const SizedBox(height: 12),
@@ -48,14 +56,17 @@ Future<void> showAddTopicDialog(BuildContext context) async {
                 maxLines: 4,
                 maxLength: 600,
                 decoration: const InputDecoration(
-                  labelText: 'What should it cover? (optional)',
-                  hintText:
-                      'A description or learning objectives, e.g. '
-                      'mechanisms, side effects and resistance',
+                  labelText: 'Description (optional)',
+                  hintText: 'e.g. mechanisms, side effects and resistance',
+                  helperText:
+                      'What should it cover? The AI uses this when '
+                      'writing questions.',
+                  helperMaxLines: 3,
                   alignLabelWithHint: true,
                 ),
               ),
-              const SizedBox(height: 8),
+              // Clear of the helper text above, which can wrap to 3 lines.
+              const SizedBox(height: 18),
               DropdownButtonFormField<String>(
                 initialValue: unitId,
                 decoration: const InputDecoration(labelText: 'Unit'),
@@ -73,7 +84,7 @@ Future<void> showAddTopicDialog(BuildContext context) async {
               const SizedBox(height: 12),
               Text(
                 'New topics start empty. Open the topic and tap '
-                '"Generate with AI" to fill it.',
+                '"Generate 5 with AI" to fill it.',
                 style: Theme.of(ctx).textTheme.bodySmall,
               ),
             ],
@@ -87,7 +98,10 @@ Future<void> showAddTopicDialog(BuildContext context) async {
           FilledButton(
             onPressed: () async {
               final name = nameCtrl.text.trim();
-              if (name.isEmpty) return;
+              if (name.isEmpty) {
+                setDialogState(() => nameError = 'Enter a topic name');
+                return;
+              }
               final t = await QuestionRepository.addCustomTopic(
                 name,
                 unitId: unitId,
@@ -263,7 +277,8 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      '${topics.length} topics · $total questions',
+                                      '${plural(topics.length, 'topic')} · '
+                                      '${plural(total, 'question')}',
                                       style: theme.textTheme.bodySmall,
                                     ),
                                   ],

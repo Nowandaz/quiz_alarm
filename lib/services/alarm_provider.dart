@@ -73,6 +73,40 @@ String describeTimeUntil(DateTime next, DateTime now) {
   return 'in ${parts.join(' ')}';
 }
 
+/// The day of [when] as people say it: "today", "tomorrow", otherwise the
+/// weekday name ("Monday").
+String describeDay(DateTime when, DateTime now) {
+  // Calendar days apart, so 11 PM to 1 AM counts as "tomorrow".
+  final days = DateTime(
+    when.year,
+    when.month,
+    when.day,
+  ).difference(DateTime(now.year, now.month, now.day)).inHours;
+  if (days < 12) return 'today';
+  if (days < 36) return 'tomorrow';
+  const names = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  return names[when.weekday - 1];
+}
+
+/// "Alarm set for tomorrow 8:13 AM, in 23 hours 59 minutes": shown after
+/// an alarm is saved or switched on, so the user sees when it will ring.
+String describeAlarmSet(
+  DateTime next,
+  DateTime now, {
+  required bool use24Hour,
+}) =>
+    'Alarm set for ${describeDay(next, now)} '
+    '${formatClock(next, use24Hour: use24Hour)}, '
+    '${describeTimeUntil(next, now)}';
+
 /// A ring that was due but, as far as this phone can tell, never
 /// happened. The home screen asks the user about it.
 class MissedRing {
@@ -281,7 +315,11 @@ class AlarmProvider extends ChangeNotifier {
 
   /// When [alarm] will next ring according to the phone (including a
   /// running snooze), or null if nothing is registered.
+  ///
+  /// A switched-off alarm counts only through its snooze: anything else
+  /// still registered for it is a leftover and must not show as "next".
   DateTime? nextRing(AlarmItem alarm) {
+    if (!alarm.isEnabled) return snoozedUntil(alarm);
     final now = DateTime.now();
     DateTime? best;
     for (final id in [
@@ -819,6 +857,19 @@ class AlarmProvider extends ChangeNotifier {
       await _arm(alarm, onlyMissing: true);
     } else {
       alarm.isEnabled = false;
+      // Nothing of a switched-off alarm may stay registered (an old
+      // weekday slot would otherwise ring, and show as the next alarm).
+      // An alarm that is not in the list has no slots of its own.
+      if (inList) {
+        try {
+          await _cancel(alarm.id);
+          for (var slot = 0; slot <= _snoozeSlot; slot++) {
+            await _cancel(_slotId(alarm, slot));
+          }
+        } catch (e) {
+          debugPrint('Could not clear alarm ${alarm.id}: $e');
+        }
+      }
       await saveAlarms();
     }
     unawaited(refillQuestionBank());

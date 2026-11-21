@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../services/alarm_provider.dart';
 import '../services/bank_provider.dart';
+import '../services/theme_provider.dart';
 import '../widgets/time_wheel.dart';
 import '../widgets/topic_picker.dart';
 
@@ -86,7 +87,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
   void initState() {
     super.initState();
     final a = widget.existingAlarm;
-    _selectedTime = a != null ? a.time : TimeOfDay.now();
+    // A new alarm starts at a usual waking time, not at the current
+    // minute (which would be a full day away).
+    _selectedTime = a?.time ?? const TimeOfDay(hour: 7, minute: 0);
     _labelCtrl = TextEditingController(text: a?.label ?? 'Quiz Alarm');
     _topics = List.of(a?.topics ?? const []);
     _audioPath = a?.audioPath ?? 'assets/sounds/alarm.mp3';
@@ -122,7 +125,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
   String _getTimeUntil() {
     final now = DateTime.now();
     final next = calculateNextTrigger(_selectedTime, _activeDays, now);
-    return 'Next alarm ${describeTimeUntil(next, now)}';
+    return 'This alarm rings ${describeTimeUntil(next, now)}';
   }
 
   bool _sameDays(List<int> a, List<int> b) =>
@@ -154,11 +157,51 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
           !_sameDays(widget.existingAlarm!.activeDays, _activeDays),
     );
 
-    if (widget.existingAlarm == null) {
-      provider.addAlarm(newAlarm);
-    } else {
-      provider.updateAlarm(newAlarm);
-    }
+    // The confirmation shows on the screen underneath once the phone has
+    // been told, so the time in it is the one really registered.
+    final messenger = ScaffoldMessenger.of(context);
+    final use24 = context.read<ThemeProvider>().use24Hour;
+    final saved = widget.existingAlarm == null
+        ? provider.addAlarm(newAlarm)
+        : provider.updateAlarm(newAlarm);
+    saved.then((_) {
+      final next = newAlarm.isEnabled ? provider.nextRing(newAlarm) : null;
+      if (next == null) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(
+              describeAlarmSet(next, DateTime.now(), use24Hour: use24),
+            ),
+          ),
+        );
+    });
+    Navigator.pop(context);
+  }
+
+  /// "Delete alarm" asks first: one stray tap must not lose an alarm.
+  Future<void> _confirmDelete() async {
+    final provider = context.read<AlarmProvider>();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete this alarm?'),
+        content: const Text('This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    provider.deleteAlarm(widget.existingAlarm!.id);
     Navigator.pop(context);
   }
 
@@ -354,7 +397,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'Select Ringtone',
+                    'Ringtone',
                     style: Theme.of(sheetContext).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 8),
@@ -568,7 +611,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'Fade-in Duration',
+                  'Fade-in',
                   style: Theme.of(sheetContext).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 8),
@@ -653,7 +696,14 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
               ButtonSegment(value: 1, label: Text('Repeat')),
             ],
             selected: {_repeatMode},
-            onSelectionChanged: (s) => setState(() => _repeatMode = s.first),
+            onSelectionChanged: (s) => setState(() {
+              _repeatMode = s.first;
+              // "Repeat" with no day ticked would ring only once, so
+              // start from the usual choice: Monday to Friday.
+              if (_repeatMode == 1 && _customDays.isEmpty) {
+                _customDays = [1, 2, 3, 4, 5];
+              }
+            }),
           ),
           const SizedBox(height: 16),
 
@@ -678,13 +728,14 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _buildDayBubble('S', 7, scheme),
+                      // Monday first, like the alarm cards.
                       _buildDayBubble('M', 1, scheme),
                       _buildDayBubble('T', 2, scheme),
                       _buildDayBubble('W', 3, scheme),
                       _buildDayBubble('T', 4, scheme),
                       _buildDayBubble('F', 5, scheme),
                       _buildDayBubble('S', 6, scheme),
+                      _buildDayBubble('S', 7, scheme),
                     ],
                   ),
                 ],
@@ -748,7 +799,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 ),
                 const Divider(height: 1, indent: 16),
                 ListTile(
-                  title: const Text('Fade-in Sound'),
+                  title: const Text('Fade-in'),
                   subtitle: Text(_fadeLabel(_fadeDuration), style: muted),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _showFadePicker,
@@ -776,15 +827,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
 
           if (widget.existingAlarm != null)
             TextButton(
-              onPressed: () {
-                Provider.of<AlarmProvider>(
-                  context,
-                  listen: false,
-                ).deleteAlarm(widget.existingAlarm!.id);
-                Navigator.pop(context);
-              },
+              onPressed: _confirmDelete,
               child: Text(
-                'Delete Alarm',
+                'Delete alarm',
                 style: TextStyle(color: scheme.error, fontSize: 16),
               ),
             ),

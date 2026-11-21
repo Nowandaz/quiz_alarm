@@ -233,6 +233,39 @@ void main() {
     expect(a.isEnabled, isTrue);
   });
 
+  test('a switched-off alarm leaves nothing registered after a dismissal '
+      'and is not the "next" alarm', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(4, days: const []);
+    await provider.addAlarm(a);
+    // Leftovers of the same alarm: a weekday from when it repeated, and a
+    // registration made by an older app version.
+    final later = DateTime.now().add(const Duration(days: 2));
+    backend.registered[slot(4, 3)] = later;
+    backend.registered[4] = later;
+
+    // The ring-once registration fires, which switches the alarm off.
+    backend.registered.remove(slot(4, 0));
+    backend.ringing.add(slot(4, 0));
+    backend.controller.add(AlarmRing(slot(4, 0), 'ring'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(a.isEnabled, isFalse);
+    expect(provider.nextRing(a), isNull); // leftovers do not count
+
+    await provider.dismissAlarm(a);
+    expect(backend.ringing, isEmpty);
+    expect(backend.registered, isEmpty);
+    expect(provider.nextRing(a), isNull);
+
+    // Off, but snoozed: the snooze is still its next ring.
+    final snoozeAt = DateTime.now().add(const Duration(minutes: 5));
+    backend.registered[slot(4, 8)] = snoozeAt;
+    expect(provider.nextRing(a), snoozeAt);
+  });
+
   test('snooze uses its own registration and the alarm length', () async {
     await resetApp();
     final backend = FakeBackend();

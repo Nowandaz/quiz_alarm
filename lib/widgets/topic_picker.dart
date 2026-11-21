@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/bank_provider.dart';
+import 'app_widgets.dart';
 
 class TopicPicker extends StatefulWidget {
   /// Ids of the topics that are ticked.
@@ -85,7 +86,10 @@ class _TopicPickerState extends State<TopicPicker> {
             Expanded(child: Text(name)),
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: Text('$count', style: theme.textTheme.bodySmall),
+              child: Text(
+                plural(count, 'question'),
+                style: theme.textTheme.bodySmall,
+              ),
             ),
           ],
         ),
@@ -107,6 +111,9 @@ class _TopicPickerState extends State<TopicPicker> {
 
       final ids = topics.map((t) => t.id).toSet();
       final picked = ids.where(widget.selected.contains).length;
+      // The tick box acts on what is on screen: while searching that is
+      // only the topics shown, never ones the search has hidden.
+      final shownIds = shown.map((t) => t.id).toSet();
       final open = searching || _open.contains(unit.id);
 
       unitBlocks.add(
@@ -130,8 +137,10 @@ class _TopicPickerState extends State<TopicPicker> {
                   children: [
                     Checkbox(
                       tristate: true,
-                      value: _state(ids),
-                      onChanged: ids.isEmpty ? null : (_) => _toggleAll(ids),
+                      value: _state(shownIds),
+                      onChanged: shownIds.isEmpty
+                          ? null
+                          : (_) => _toggleAll(shownIds),
                     ),
                     Expanded(
                       child: Column(
@@ -140,8 +149,9 @@ class _TopicPickerState extends State<TopicPicker> {
                           Text(unit.name, style: theme.textTheme.titleSmall),
                           Text(
                             picked == 0
-                                ? '${topics.length} topics'
-                                : '$picked of ${topics.length} topics selected',
+                                ? plural(topics.length, 'topic')
+                                : '$picked of '
+                                      '${plural(topics.length, 'topic')} selected',
                             style: theme.textTheme.bodySmall,
                           ),
                         ],
@@ -244,6 +254,7 @@ Future<Set<String>?> showTopicPickerSheet(
   String title = 'Topics',
 }) {
   var current = {...initial};
+  final allCount = context.read<BankProvider>().topics.length;
   return showModalBottomSheet<Set<String>>(
     context: context,
     isScrollControlled: true,
@@ -255,7 +266,14 @@ Future<Set<String>?> showTopicPickerSheet(
             maxHeight: MediaQuery.of(ctx).size.height * 0.8,
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            // Room for the keyboard, so the list and Done stay in view
+            // while searching.
+            padding: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              16 + MediaQuery.viewInsetsOf(ctx).bottom,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -263,9 +281,12 @@ Future<Set<String>?> showTopicPickerSheet(
                 Text(title, style: Theme.of(ctx).textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(
+                  // Every topic ticked means the same as none ticked.
                   current.isEmpty
                       ? 'All topics'
-                      : '${current.length} topic${current.length == 1 ? '' : 's'} selected',
+                      : current.length == allCount
+                      ? 'All topics ($allCount)'
+                      : '${plural(current.length, 'topic')} selected',
                   style: Theme.of(ctx).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 8),

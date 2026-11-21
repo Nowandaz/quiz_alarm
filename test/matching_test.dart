@@ -77,6 +77,32 @@ void main() {
     expect(greetingFor(22), 'Good night');
   });
 
+  test('plural adds an s except for one', () {
+    expect(plural(1, 'topic'), '1 topic');
+    expect(plural(0, 'question'), '0 questions');
+    expect(plural(12, 'question'), '12 questions');
+  });
+
+  test('describeDay and describeAlarmSet say when an alarm rings', () {
+    // Friday 13 Nov 2026, 23:30
+    final now = DateTime(2026, 11, 13, 23, 30);
+    expect(describeDay(DateTime(2026, 11, 13, 23, 45), now), 'today');
+    // Half an hour away, but on the next calendar day.
+    expect(describeDay(DateTime(2026, 11, 14, 0, 0), now), 'tomorrow');
+    expect(describeDay(DateTime(2026, 11, 14, 23, 59), now), 'tomorrow');
+    expect(describeDay(DateTime(2026, 11, 15, 7, 0), now), 'Sunday');
+    expect(describeDay(DateTime(2026, 11, 16, 7, 0), now), 'Monday');
+
+    expect(
+      describeAlarmSet(DateTime(2026, 11, 14, 8, 13), now, use24Hour: false),
+      'Alarm set for tomorrow 8:13 AM, in 8 hours 43 minutes',
+    );
+    expect(
+      describeAlarmSet(DateTime(2026, 11, 15, 20, 5), now, use24Hour: true),
+      'Alarm set for Sunday 20:05, in 1 day 20 hours',
+    );
+  });
+
   group('describeTimeUntil', () {
     final now = DateTime(2026, 11, 13, 10, 0);
     test('minutes, hours and days', () {

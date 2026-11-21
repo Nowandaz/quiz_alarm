@@ -92,6 +92,35 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// "Forgot password?": emails a link for setting a new one.
+  Future<void> _forgotPassword() async {
+    final email = _email.text.trim();
+    if (!email.contains('@') || email.length < 5) {
+      setState(() {
+        _error = 'Enter your email address first.';
+        _notice = null;
+      });
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    final error = await Account.instance.resetPassword(email);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error;
+      if (error == null) {
+        _notice =
+            'We emailed you a link to set a new password. Open it, then '
+            'come back and sign in.';
+      }
+    });
+  }
+
   Future<void> _submit() async {
     final email = _email.text.trim();
     final password = _password.text;
@@ -286,6 +315,14 @@ class _AccountScreenState extends State<AccountScreen> {
                                     ),
                                   ),
                                 ),
+                                if (!_creating)
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: TextButton(
+                                      onPressed: _busy ? null : _forgotPassword,
+                                      child: const Text('Forgot password?'),
+                                    ),
+                                  ),
                                 if (_error != null) ...[
                                   const SizedBox(height: 12),
                                   _Message(_error!, color: scheme.error),
