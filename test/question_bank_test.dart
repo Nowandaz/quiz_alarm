@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:quiz_alarm/data/question_repository.dart';
+import 'package:quiz_alarm/services/bank_provider.dart';
 import 'package:quiz_alarm/models/models.dart';
 import 'package:quiz_alarm/services/question_service.dart';
 
@@ -469,5 +470,132 @@ void main() {
         );
       },
     );
+  });
+  group('archived units', () {
+    test('"all topics" leaves out an archived unit; naming it still '
+        'works', () async {
+      final everything = await QuestionRepository.getTopics();
+      await QuestionRepository.setUnitArchived('pathology', true);
+      expect(await QuestionRepository.getArchivedUnits(), {'pathology'});
+
+      // The unit and its topics are still there: archiving only hides.
+      expect(
+        (await QuestionRepository.getUnits()).map((u) => u.id),
+        contains('pathology'),
+      );
+      expect((await QuestionRepository.getTopics()).length, everything.length);
+
+      final all = await QuestionRepository.resolveTopicIds(const []);
+      expect(all, isNotEmpty);
+      expect(all.where((id) => id.startsWith('path-')), isEmpty);
+      expect(
+        all.length,
+        everything.where((t) => t.unitId != 'pathology').length,
+      );
+      // An unknown name falls back to "all topics" as well.
+      expect(await QuestionRepository.resolveTopicIds(['Nonsense']), all);
+
+      // An alarm or session set on the archived unit, or on one of its
+      // topics, keeps asking from it.
+      expect(
+        (await QuestionRepository.resolveTopicIds(['pathology'])).toSet(),
+        {'path-haematology-spotters', 'path-histology-spotters'},
+      );
+      expect(
+        await QuestionRepository.resolveTopicIds(['path-histology-spotters']),
+        ['path-histology-spotters'],
+      );
+      expect(
+        await QuestionRepository.describeSelection(['pathology']),
+        'Pathology',
+      );
+      expect(
+        await QuestionRepository.describeSelection(const []),
+        'All topics',
+      );
+
+      // Restoring puts it back into "all topics".
+      await QuestionRepository.setUnitArchived('pathology', false);
+      expect(
+        (await QuestionRepository.resolveTopicIds(const [])).length,
+        everything.length,
+      );
+    });
+
+    test('with every unit archived, "all topics" is everything again '
+        '(an alarm must have questions)', () async {
+      for (final u in await QuestionRepository.getUnits()) {
+        await QuestionRepository.setUnitArchived(u.id, true);
+      }
+      expect(
+        (await QuestionRepository.resolveTopicIds(const [])).length,
+        (await QuestionRepository.getTopics()).length,
+      );
+      expect(await QuestionRepository.pickNext(const []), isNotNull);
+    });
+
+    test('archiving deletes nothing: answers, sessions and reports '
+        'stay', () async {
+      final qs = await QuestionRepository.getQuestions(
+        'path-haematology-spotters',
+      );
+      final session = await QuestionRepository.startSession('bank', 'Path');
+      await QuestionRepository.recordAttempt(
+        qs[0].id,
+        correct: true,
+        mode: 'bank',
+        sessionId: session,
+      );
+      await QuestionRepository.recordAttempt(
+        qs[1].id,
+        correct: false,
+        mode: 'bank',
+        sessionId: session,
+      );
+      await QuestionRepository.endSession(session, 'finished');
+      final before = await QuestionRepository.getStats();
+
+      await QuestionRepository.setUnitArchived('pathology', true);
+
+      expect(
+        (await QuestionRepository.getQuestions('path-haematology-spotters'))
+            .length,
+        qs.length,
+      );
+      final after = await QuestionRepository.getStats();
+      expect(after['path-haematology-spotters']!.seen, 2);
+      expect(
+        after['path-haematology-spotters']!.mastered,
+        before['path-haematology-spotters']!.mastered,
+      );
+      expect((await QuestionRepository.getSessions()).single.questions, 2);
+      expect(
+        await QuestionRepository.getSessionAttempts(session!),
+        hasLength(2),
+      );
+      final report = await QuestionRepository.getReport();
+      expect(report.answered, 2);
+      expect(report.topics.single.topic, 'Haematology spotters');
+      expect(report.topics.single.id, 'path-haematology-spotters');
+    });
+
+    test('the bank provider offers only units that are not archived', () async {
+      await QuestionRepository.setUnitArchived('pathology', true);
+      final bank = BankProvider();
+      await bank.reload();
+      expect(bank.units.length, 2);
+      expect(bank.activeUnits.map((u) => u.id), ['pharmacology']);
+      expect(bank.archivedUnits.map((u) => u.id), ['pathology']);
+      expect(bank.activeTopics.any((t) => t.unitId == 'pathology'), isFalse);
+      expect(bank.describe(const []), 'All topics');
+      expect(bank.describe(['pathology']), 'Pathology');
+      // Every topic that is on offer, ticked one by one, is "all topics".
+      expect(bank.describe(bank.activeTopics.map((t) => t.id)), 'All topics');
+
+      await bank.setArchived('pathology', false);
+      expect(bank.archivedUnits, isEmpty);
+      expect(bank.activeUnits.length, 2);
+      bank.dispose();
+    });
   });
 }

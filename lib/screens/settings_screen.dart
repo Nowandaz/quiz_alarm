@@ -1,4 +1,5 @@
-/// Settings: theme, clock, alarm permissions, the account, and a visible
+/// Settings: theme, clock, alarm permissions, the account, privacy
+/// (what is shared, what is stored, deleting the account), and a visible
 /// status of the AI question generation (so failures are not silent).
 library;
 
@@ -11,6 +12,7 @@ import '../services/ai_client.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/question_service.dart';
 import '../services/sync_service.dart';
@@ -35,6 +37,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _fullScreenOk = true;
   bool _overlayOk = true;
   bool _needsAutostart = false;
+
+  // "Share alarm diagnostics". On until the user switches it off.
+  bool _shareDiagnostics = true;
   bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -44,6 +49,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadAllowance();
     _loadStatus();
     _loadAlarmAccess();
+    SharedPreferences.getInstance().then((prefs) {
+      final share = prefs.getBool(SyncService.shareDiagnosticsPref) ?? true;
+      if (mounted) setState(() => _shareDiagnostics = share);
+    });
     SystemBridge.needsAutostart().then((v) {
       if (mounted && v) setState(() => _needsAutostart = true);
     });
@@ -105,6 +114,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _allowance = null);
   }
 
+  Future<void> _setShareDiagnostics(bool value) async {
+    setState(() => _shareDiagnostics = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(SyncService.shareDiagnosticsPref, value);
+  }
+
+  /// Says what goes, then asks for the word DELETE before anything is
+  /// removed: this cannot be undone, so one stray tap must not do it.
+  Future<void> _deleteAccount() async {
+    final typed = TextEditingController();
+    var working = false;
+    String? error;
+    final deleted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, refresh) {
+          final scheme = Theme.of(ctx).colorScheme;
+          final confirmed = typed.text.trim() == 'DELETE';
+          return AlertDialog(
+            title: const Text('Delete your account?'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Your account and everything stored for it on our '
+                    'server is deleted for good: answers, sessions, AI '
+                    'questions, backups, reports. Alarms on this phone stay.',
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: typed,
+                    enabled: !working,
+                    autocorrect: false,
+                    textCapitalization: TextCapitalization.characters,
+                    onChanged: (_) => refresh(() {}),
+                    decoration: InputDecoration(
+                      labelText: 'Type DELETE to confirm',
+                      errorText: error,
+                      errorMaxLines: 3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: working ? null : () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: scheme.error,
+                  // White reads on the red of both themes.
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: !confirmed || working
+                    ? null
+                    : () async {
+                        refresh(() {
+                          working = true;
+                          error = null;
+                        });
+                        final problem = await Account.instance.deleteAccount();
+                        if (!ctx.mounted) return;
+                        if (problem == null) {
+                          Navigator.pop(ctx, true);
+                        } else {
+                          refresh(() {
+                            working = false;
+                            error = problem;
+                          });
+                        }
+                      },
+                child: Text(working ? 'Deleting...' : 'Delete account'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (deleted != true || !mounted) return;
+    setState(() => _allowance = null);
+    // The sign-in screen comes up by itself (the home screen watches the
+    // account); this says why.
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Your account was deleted.')));
+  }
+
   void _dialog(String title, String body) {
     showDialog<void>(
       context: context,
@@ -154,7 +255,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
-    final isDark = themeProvider.themeMode == ThemeMode.dark;
+    final scheme = Theme.of(context).colorScheme;
     final small = Theme.of(context).textTheme.bodySmall;
     final account = context.watch<Account>();
     final allowance = _allowance;
@@ -173,13 +274,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
-                SwitchListTile(
-                  title: const Text('Dark theme'),
-                  secondary: Icon(
-                    isDark ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                ListTile(
+                  leading: Icon(
+                    Theme.of(context).brightness == Brightness.dark
+                        ? Icons.dark_mode_rounded
+                        : Icons.light_mode_rounded,
                   ),
-                  value: isDark,
-                  onChanged: (v) => themeProvider.toggleTheme(v),
+                  title: const Text('Theme'),
+                  subtitle: Text(switch (themeProvider.themeMode) {
+                    ThemeMode.light => 'Always light',
+                    ThemeMode.dark => 'Always dark',
+                    ThemeMode.system =>
+                      'System default: follows your phone\'s setting',
+                  }),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<ThemeMode>(
+                      showSelectedIcon: false,
+                      segments: const [
+                        ButtonSegment(
+                          value: ThemeMode.light,
+                          label: Text('Light'),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.dark,
+                          label: Text('Dark'),
+                        ),
+                        ButtonSegment(
+                          value: ThemeMode.system,
+                          label: Text('System'),
+                        ),
+                      ],
+                      selected: {themeProvider.themeMode},
+                      onSelectionChanged: (s) =>
+                          themeProvider.setThemeMode(s.first),
+                    ),
+                  ),
                 ),
                 const Divider(height: 1, indent: 16, endIndent: 16),
                 SwitchListTile(
@@ -364,6 +497,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     trailing: const Icon(Icons.chevron_right_rounded),
                     onTap: _openAccount,
                   ),
+          ),
+          const SizedBox(height: 24),
+          const Text('Privacy', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                SwitchListTile(
+                  title: const Text('Share alarm diagnostics'),
+                  subtitle: const Text(
+                    'Sends a record of when alarms were set, rang and were '
+                    'dismissed, so problems can be found. Your answers are '
+                    'never shared with anyone else.',
+                  ),
+                  secondary: const Icon(Icons.monitor_heart_outlined),
+                  value: _shareDiagnostics,
+                  onChanged: _setShareDiagnostics,
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.storage_rounded),
+                  title: const Text('What is stored'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => _dialog(
+                    'What is stored',
+                    'On our server: your email, your answers and sessions, '
+                        'questions the AI wrote for you, a backup of your '
+                        'alarms and settings, and alarm diagnostics if '
+                        'switched on.',
+                  ),
+                ),
+                // Only an account that is signed in can be deleted.
+                if (account.isSignedIn) ...[
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  ListTile(
+                    leading: Icon(
+                      Icons.delete_forever_rounded,
+                      color: scheme.error,
+                    ),
+                    title: Text(
+                      'Delete account',
+                      style: TextStyle(
+                        color: scheme.error,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      'Removes your account and everything stored for it. '
+                      'This cannot be undone.',
+                    ),
+                    onTap: _deleteAccount,
+                  ),
+                ],
+              ],
+            ),
           ),
           const SizedBox(height: 24),
           const Divider(),

@@ -39,7 +39,7 @@ enum _Phase { loading, asking, grading, correct, wrong, failed, done }
 
 class _AlarmRingScreenState extends State<AlarmRingScreen> {
   static const Color _baseColor = Colors.black;
-  static const int _wrongForSnooze = 5;
+  static const int _wrongForSnooze = AlarmItem.wrongAnswersForSnooze;
 
   int _correctStreak = 0;
   int _wrongStreak = 0;

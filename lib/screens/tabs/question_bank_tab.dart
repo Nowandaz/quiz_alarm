@@ -1,6 +1,7 @@
 /// Question Banks tab: one card per unit (Pharmacology, Pathology...) with
 /// its mastery. Tap a unit to see its topics. "Practise" opens the set-up
-/// sheet where topics, number of questions and source are chosen.
+/// sheet where topics, number of questions and source are chosen. Units
+/// the user archived sit in a closed "Archived" list at the bottom.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -9,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../../data/question_repository.dart';
 import '../../models/models.dart';
 import '../../services/bank_provider.dart';
+import '../../services/sync_service.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/coach_tour.dart';
 import '../practice_setup.dart';
@@ -71,7 +73,7 @@ Future<void> showAddTopicDialog(BuildContext context) async {
                 initialValue: unitId,
                 decoration: const InputDecoration(labelText: 'Unit'),
                 items: [
-                  for (final u in bank.units)
+                  for (final u in bank.activeUnits)
                     if (u.id != QuestionRepository.customUnitId)
                       DropdownMenuItem(value: u.id, child: Text(u.name)),
                   const DropdownMenuItem(
@@ -116,6 +118,10 @@ Future<void> showAddTopicDialog(BuildContext context) async {
     ),
   );
   if (created == null) return;
+  // A new topic in the archived "My topics" would be invisible.
+  if (bank.isArchived(created.unitId)) {
+    await QuestionRepository.setUnitArchived(created.unitId, false);
+  }
   await bank.reload();
   if (context.mounted) {
     Navigator.push(
@@ -146,7 +152,6 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
   Widget build(BuildContext context) {
     final bank = context.watch<BankProvider>();
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
 
     if (bank.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -160,13 +165,29 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
       );
     }
 
+    final units = bank.activeUnits;
+    final topics = bank.activeTopics;
+    final archived = bank.archivedUnits;
+    final padding = EdgeInsets.fromLTRB(
+      16,
+      6,
+      16,
+      24 + MediaQuery.paddingOf(context).bottom,
+    );
+
+    // Nothing at all: the first download has not finished and no bank
+    // came with the app.
+    if (bank.units.isEmpty) {
+      return ListView(padding: padding, children: const [_EmptyBank()]);
+    }
+
+    final q = _query.trim().toLowerCase();
+    bool matches(Topic t) =>
+        t.name.toLowerCase().contains(q) ||
+        units.any((u) => u.id == t.unitId && u.name.toLowerCase().contains(q));
+
     return ListView(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        6,
-        16,
-        24 + MediaQuery.paddingOf(context).bottom,
-      ),
+      padding: padding,
       children: [
         PrimaryButton(
           key: TourKeys.practise,
@@ -174,7 +195,7 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
           label: 'Practise',
           onPressed: () => showPracticeSetup(
             context,
-            initialTopics: bank.topics.map((t) => t.id).toSet(),
+            initialTopics: topics.map((t) => t.id).toSet(),
           ),
         ),
         const SizedBox(height: 6),
@@ -205,28 +226,17 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
         ),
         const SizedBox(height: 14),
         // While searching: the matching topics, straight to the topic.
-        if (_query.trim().isNotEmpty) ...[
-          for (final topic in bank.topics.where((t) {
-            final q = _query.trim().toLowerCase();
-            final unit = bank.units.where((u) => u.id == t.unitId);
-            return t.name.toLowerCase().contains(q) ||
-                unit.any((u) => u.name.toLowerCase().contains(q));
-          }))
+        if (q.isNotEmpty) ...[
+          for (final topic in topics.where(matches))
             TopicCard(
               topic: topic,
               stats: bank.statsOf(topic.id),
-              unitName: bank.units
+              unitName: units
                   .where((u) => u.id == topic.unitId)
                   .map((u) => u.name)
                   .firstOrNull,
             ),
-          if (!bank.topics.any((t) {
-            final q = _query.trim().toLowerCase();
-            return t.name.toLowerCase().contains(q) ||
-                bank.units.any(
-                  (u) => u.id == t.unitId && u.name.toLowerCase().contains(q),
-                );
-          }))
+          if (!topics.any(matches))
             Padding(
               padding: const EdgeInsets.all(24),
               child: Text(
@@ -234,97 +244,236 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
                 textAlign: TextAlign.center,
               ),
             ),
-        ] else
-          for (final unit in bank.units)
-            Builder(
-              builder: (context) {
-                final topics = bank.topicsOf(unit.id);
-                final total = topics.fold<int>(
-                  0,
-                  (n, t) => n + bank.statsOf(t.id).total,
-                );
-                final mastered = topics.fold<int>(
-                  0,
-                  (n, t) => n + bank.statsOf(t.id).mastered,
-                );
-                final share = total == 0 ? 0.0 : mastered / total;
+        ] else ...[
+          if (units.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text(
+                'Every unit is archived. Restore one below to practise it.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          for (final unit in units)
+            Padding(
+              key: unit.id == units.first.id ? TourKeys.firstUnit : null,
+              padding: const EdgeInsets.only(bottom: 14),
+              child: _UnitCard(unit: unit),
+            ),
+          if (archived.isNotEmpty) _ArchivedUnits(units: archived),
+        ],
+      ],
+    );
+  }
+}
 
-                return Padding(
-                  key: unit.id == bank.units.first.id
-                      ? TourKeys.firstUnit
-                      : null,
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(28),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => UnitScreen(unit: unit)),
-                    ),
-                    child: GlossCard(
-                      padding: const EdgeInsets.all(18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      unit.name,
-                                      style: theme.textTheme.titleLarge,
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${plural(topics.length, 'topic')} · '
-                                      '${plural(total, 'question')}',
-                                      style: theme.textTheme.bodySmall,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Icon(
-                                Icons.chevron_right_rounded,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'Overall subject mastery',
-                                  style: theme.textTheme.bodySmall?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                '${(share * 100).round()}% mastered',
-                                style: TextStyle(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          LinearProgressIndicator(
-                            value: share,
-                            minHeight: 8,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                        ],
+/// One unit on the Banks tab: name, size and mastery. Tap opens it;
+/// a long press offers to archive it.
+class _UnitCard extends StatelessWidget {
+  final StudyUnit unit;
+  const _UnitCard({required this.unit});
+
+  @override
+  Widget build(BuildContext context) {
+    final bank = context.watch<BankProvider>();
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final topics = bank.topicsOf(unit.id);
+    final total = topics.fold<int>(0, (n, t) => n + bank.statsOf(t.id).total);
+    final mastered = topics.fold<int>(
+      0,
+      (n, t) => n + bank.statsOf(t.id).mastered,
+    );
+    final share = total == 0 ? 0.0 : mastered / total;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(28),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => UnitScreen(unit: unit)),
+      ),
+      onLongPress: () => confirmArchiveUnit(context, unit),
+      child: GlossCard(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(unit.name, style: theme.textTheme.titleLarge),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${plural(topics.length, 'topic')} \u00b7 '
+                        '${plural(total, 'question')}',
+                        style: theme.textTheme.bodySmall,
                       ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Overall subject mastery',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                );
-              },
+                ),
+                Text(
+                  '${(share * 100).round()}% mastered',
+                  style: TextStyle(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
             ),
-      ],
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: share,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// "Archived (n)": closed until tapped, then the archived units, each
+/// with "Restore". Their answers and reports were never touched.
+class _ArchivedUnits extends StatelessWidget {
+  final List<StudyUnit> units;
+  const _ArchivedUnits({required this.units});
+
+  @override
+  Widget build(BuildContext context) {
+    final bank = context.read<BankProvider>();
+    final theme = Theme.of(context);
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        shape: const Border(),
+        collapsedShape: const Border(),
+        leading: const Icon(Icons.inventory_2_outlined),
+        title: Text('Archived (${units.length})'),
+        subtitle: Text(
+          'Hidden, not deleted. Your history stays.',
+          style: theme.textTheme.bodySmall,
+        ),
+        children: [
+          for (final unit in units)
+            ListTile(
+              title: Text(unit.name),
+              subtitle: Text(plural(bank.topicsOf(unit.id).length, 'topic')),
+              trailing: TextButton(
+                onPressed: () => bank.setArchived(unit.id, false),
+                child: const Text('Restore'),
+              ),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => UnitScreen(unit: unit)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shown when there are no units at all: says the bank arrives by itself
+/// and what can be done meanwhile.
+class _EmptyBank extends StatelessWidget {
+  const _EmptyBank();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: scheme.onSurface.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.cloud_download_outlined, size: 28),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text('No questions yet', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 6),
+            const Text(
+              'The question bank downloads by itself when you are online.',
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'You can also add a topic of your own with "Add topic" and '
+              'have the AI write questions for it.',
+            ),
+            const SizedBox(height: 16),
+            PrimaryButton(
+              icon: Icons.add_rounded,
+              label: 'Add topic',
+              onPressed: () => showAddTopicDialog(context),
+            ),
+            const SizedBox(height: 8),
+            // The download again, now. Its result shows underneath.
+            ValueListenableBuilder<bool>(
+              valueListenable: SyncService.running,
+              builder: (context, running, _) => OutlinedButton.icon(
+                onPressed: running ? null : () => SyncService.run(),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                icon: running
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh_rounded),
+                label: Text(running ? 'Downloading...' : 'Try again'),
+              ),
+            ),
+            ValueListenableBuilder<String?>(
+              valueListenable: SyncService.status,
+              builder: (context, status, _) =>
+                  status == null || !status.startsWith('Could not')
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        status,
+                        style: theme.textTheme.bodySmall,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

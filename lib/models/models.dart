@@ -203,11 +203,107 @@ class DayStat {
 
 /// All-time accuracy on one topic.
 class TopicAccuracy {
+  /// Id of the topic, so a tap can open practice for it.
+  final String id;
   final String topic;
   final int answered;
   final int correct;
-  const TopicAccuracy(this.topic, this.answered, this.correct);
+  const TopicAccuracy(this.topic, this.answered, this.correct, {this.id = ''});
   double get accuracy => answered == 0 ? 0 : correct / answered;
+}
+
+/// How one topic did in the last 14 days and in the 14 days before.
+class TopicTrend {
+  final String id;
+  final String topic;
+  final int answered;
+  final int correct;
+  final int previousAnswered;
+  final int previousCorrect;
+  const TopicTrend({
+    required this.id,
+    required this.topic,
+    this.answered = 0,
+    this.correct = 0,
+    this.previousAnswered = 0,
+    this.previousCorrect = 0,
+  });
+
+  double get accuracy => answered == 0 ? 0 : correct / answered;
+  double get previousAccuracy =>
+      previousAnswered == 0 ? 0 : previousCorrect / previousAnswered;
+
+  /// Percentage points gained (or lost, when negative) between the two
+  /// periods.
+  int get change => (accuracy * 100).round() - (previousAccuracy * 100).round();
+}
+
+/// The "Trends" card of the Reports tab: the last 14 days against the 14
+/// days before, this week against last week, and the topics that moved.
+class ReportTrends {
+  /// A topic needs this many answers in a period before it is compared.
+  /// Fewer would make one lucky answer look like progress.
+  static const int minAnswers = 5;
+
+  /// Answers in the last 14 days (today included).
+  final int answered;
+  final int correct;
+
+  /// Answers in the 14 days before those.
+  final int previousAnswered;
+  final int previousCorrect;
+
+  /// Questions answered since Monday, and in the week before.
+  final int thisWeek;
+  final int lastWeek;
+
+  /// Monday to Sunday of this week: true on the days something was
+  /// answered. Days still to come are false.
+  final List<bool> weekDays;
+
+  /// Topics whose accuracy rose most, biggest rise first (up to 3).
+  final List<TopicTrend> improving;
+
+  /// Topics with the lowest accuracy in the last 14 days (up to 3).
+  final List<TopicTrend> needsRevision;
+
+  const ReportTrends({
+    this.answered = 0,
+    this.correct = 0,
+    this.previousAnswered = 0,
+    this.previousCorrect = 0,
+    this.thisWeek = 0,
+    this.lastWeek = 0,
+    this.weekDays = const [false, false, false, false, false, false, false],
+    this.improving = const [],
+    this.needsRevision = const [],
+  });
+
+  /// Accuracy in the last 14 days as a whole percentage, or null when
+  /// nothing was answered.
+  int? get accuracy =>
+      answered == 0 ? null : (correct * 100 / answered).round();
+
+  /// How the last 14 days compare with the 14 days before: "up 8 points
+  /// from the 14 days before", "down 5 points from the 14 days before",
+  /// "no change from the 14 days before" or, with nothing earlier to
+  /// compare with, "first 14 days". Null when nothing was answered.
+  String? get comparison {
+    final now = accuracy;
+    if (now == null) return null;
+    if (previousAnswered == 0) return 'first 14 days';
+    final diff = now - (previousCorrect * 100 / previousAnswered).round();
+    if (diff == 0) return 'no change from the 14 days before';
+    final points = '${diff.abs()} point${diff.abs() == 1 ? '' : 's'}';
+    return '${diff > 0 ? 'up' : 'down'} $points from the 14 days before';
+  }
+
+  /// Days of this week with at least one answer.
+  int get daysPractised => weekDays.where((d) => d).length;
+
+  /// True when there is nothing recent to show at all.
+  bool get isEmpty =>
+      answered == 0 && previousAnswered == 0 && thisWeek == 0 && lastWeek == 0;
 }
 
 /// The numbers at the top of the Reports tab.
@@ -223,6 +319,7 @@ class ReportSummary {
   final double? avgWakeQuestions;
   final List<DayStat> days;
   final List<TopicAccuracy> topics;
+  final ReportTrends trends;
 
   const ReportSummary({
     this.answered = 0,
@@ -232,6 +329,7 @@ class ReportSummary {
     this.avgWakeQuestions,
     this.days = const [],
     this.topics = const [],
+    this.trends = const ReportTrends(),
   });
 }
 
@@ -266,13 +364,52 @@ class AlarmItem {
   static const int maxStreak = 15;
   static const List<int> snoozeChoices = [3, 5, 10];
 
+  /// Wrong answers in a row before the snooze button appears while an
+  /// alarm rings. One number for the ring screen and the editor's text.
+  static const int wrongAnswersForSnooze = 5;
+
+  /// Streaks of the named difficulties. Anything else is "Custom".
+  static const int easyStreak = 2;
+  static const int mediumStreak = 3;
+  static const int hardStreak = 5;
+  static const List<int> presetStreaks = [easyStreak, mediumStreak, hardStreak];
+
+  /// The range the "Custom" slider offers.
+  static const int customMinStreak = 6;
+  static const int customMaxStreak = maxStreak;
+
   /// "Easy", "Medium", "Hard" or "Custom" for [streak].
   static String difficultyName(int streak) => switch (streak) {
-    2 => 'Easy',
-    3 => 'Medium',
-    5 => 'Hard',
+    easyStreak => 'Easy',
+    mediumStreak => 'Medium',
+    hardStreak => 'Hard',
     _ => 'Custom',
   };
+
+  /// What a difficulty asks for, said before the alarm is saved:
+  /// "3 correct answers in a row to stop the alarm."
+  static String difficultyMeaning(int streak) =>
+      '$streak correct answers in a row to stop the alarm.';
+
+  /// A rough idea of how long that takes, or '' where it is neither
+  /// quick nor long.
+  static String difficultyEffort(int streak) => streak <= easyStreak
+      ? 'About a minute.'
+      : streak >= hardStreak
+      ? 'Expect a few minutes.'
+      : '';
+
+  /// The days an alarm rings on, in a few words: "Once", "Every day",
+  /// "Weekdays", "Weekends" or "Mon, Wed, Fri".
+  static String describeDays(List<int> activeDays) {
+    final days = activeDays.toSet().toList()..sort();
+    if (days.isEmpty) return 'Once';
+    if (days.length == 7) return 'Every day';
+    if (days.join() == '12345') return 'Weekdays';
+    if (days.join() == '67') return 'Weekends';
+    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return days.map((d) => names[d - 1]).join(', ');
+  }
 
   AlarmItem({
     required this.id,

@@ -63,7 +63,9 @@ class AlarmLog {
         'detail': jsonEncode(detail),
       });
       await db.rawDelete(
-        'DELETE FROM alarm_events WHERE synced = 1 AND id NOT IN '
+        // Uploaded entries, and ones set aside because diagnostics are
+        // switched off. Entries still waiting to go up are never trimmed.
+        'DELETE FROM alarm_events WHERE synced != 0 AND id NOT IN '
         '(SELECT id FROM alarm_events ORDER BY id DESC LIMIT ?)',
         [_keep],
       );

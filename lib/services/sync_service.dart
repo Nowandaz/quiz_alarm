@@ -58,6 +58,10 @@ class SyncService {
   static const String _bankFullKey = 'bank_full_at';
   static const String _ownerKey = 'data_owner';
   static const String _deletedKey = QuestionRepository.deletedOwnQuestionsKey;
+
+  /// Preference behind "Share alarm diagnostics" in Settings (on unless
+  /// switched off). Off: the alarm diary stays on the phone.
+  static const String shareDiagnosticsPref = 'shareDiagnostics';
   static const Duration _fullEvery = Duration(days: 3);
   static const int _page = 500;
   static const int _chunk = 200;
@@ -652,20 +656,44 @@ class SyncService {
       return false;
     }
     await db.transaction((txn) async {
-      await txn.delete('attempts');
-      await txn.delete('sessions');
-      await txn.delete('alarm_events');
-      await txn.delete('questions', where: "source IN ('ai', 'user')");
-      await txn.rawDelete(
-        'DELETE FROM topics WHERE is_custom = 1 AND id NOT IN '
-        '(SELECT DISTINCT topic_id FROM questions)',
-      );
-      await txn.delete('meta', where: 'key = ?', whereArgs: ['restored:$uid']);
-      await txn.delete('meta', where: 'key = ?', whereArgs: [_deletedKey]);
+      await _wipeHistory(txn, uid);
       await _setMeta(txn, _ownerKey, uid);
     });
     (await SharedPreferences.getInstance()).remove(_backupPref);
     return true;
+  }
+
+  /// Removes one person's history from the phone: answers, sessions, the
+  /// alarm diary, their own questions and the topics left empty by that.
+  /// Also forgets that [uid]'s history was ever fetched, so it would be
+  /// fetched again. The question bank and the alarms stay.
+  static Future<void> _wipeHistory(Transaction txn, String? uid) async {
+    await txn.delete('attempts');
+    await txn.delete('sessions');
+    await txn.delete('alarm_events');
+    await txn.delete('questions', where: "source IN ('ai', 'user')");
+    await txn.rawDelete(
+      'DELETE FROM topics WHERE is_custom = 1 AND id NOT IN '
+      '(SELECT DISTINCT topic_id FROM questions)',
+    );
+    if (uid != null) {
+      await txn.delete('meta', where: 'key = ?', whereArgs: ['restored:$uid']);
+    }
+    await txn.delete('meta', where: 'key = ?', whereArgs: [_deletedKey]);
+  }
+
+  /// Clears the signed-in person's history from this phone and forgets
+  /// whose data the phone held, so the next account starts clean. Used
+  /// when an account is deleted. Call it while still signed in.
+  static Future<void> forgetLocalHistory() async {
+    final uid = Account.instance.userId;
+    final db = await AppDatabase.instance;
+    await db.transaction((txn) async {
+      await _wipeHistory(txn, uid);
+      await txn.delete('meta', where: 'key = ?', whereArgs: [_ownerKey]);
+    });
+    (await SharedPreferences.getInstance()).remove(_backupPref);
+    QuestionService.changes.value++;
   }
 
   static Future<Directory?> _defaultPictureFolder() async {
@@ -872,6 +900,16 @@ class SyncService {
     }
 
     // 4. The alarm diary and problem reports.
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(shareDiagnosticsPref) == false) {
+      // Diagnostics are switched off: the diary stays on the phone. What
+      // was written meanwhile is set aside for good, so switching the
+      // setting back on does not send it after all. A problem report is
+      // different: the user chose to send that one.
+      await db.update('alarm_events', {
+        'synced': 2,
+      }, where: "synced = 0 AND type != 'report'");
+    }
     final events = await db.query(
       'alarm_events',
       where: 'synced = 0',
@@ -913,14 +951,23 @@ class SyncService {
     }
 
     // 5. Alarms and settings, when they changed.
-    final prefs = await SharedPreferences.getInstance();
+    final saved = <String, Object>{};
+    for (final key in const [
+      'isDarkTheme',
+      'use24Hour',
+      'analogClock',
+      'headsUp',
+      'themeMode',
+    ]) {
+      // Only yes/no and text settings; anything else under these names
+      // would be a mistake and is left out.
+      final value = prefs.get(key);
+      if (value is bool || value is String) saved[key] = value!;
+    }
     final backup = {
       'user_id': uid,
       'alarms': jsonDecode(prefs.getString('saved_alarms') ?? '[]'),
-      'settings': {
-        for (final key in const ['isDarkTheme', 'use24Hour', 'analogClock'])
-          if (prefs.getBool(key) != null) key: prefs.getBool(key),
-      },
+      'settings': saved,
     };
     final hash = '${sha1.convert(utf8.encode(jsonEncode(backup)))}';
     if (prefs.getString(_backupPref) != hash) {

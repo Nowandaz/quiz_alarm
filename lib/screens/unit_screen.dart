@@ -1,5 +1,5 @@
 /// One unit (e.g. Pharmacology): its mastery, a "Practise" button and the
-/// list of its topics.
+/// list of its topics. A unit can be archived here (hidden, never deleted).
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -11,6 +11,48 @@ import '../widgets/app_widgets.dart';
 import 'practice_setup.dart';
 import 'tabs/question_bank_tab.dart' show showAddTopicDialog;
 import 'topic_screen.dart';
+
+/// Asks, then archives [unit]: it is hidden from Banks, the topic picker
+/// and "all topics", but nothing is deleted. Returns true if archived.
+Future<bool> confirmArchiveUnit(BuildContext context, StudyUnit unit) async {
+  final bank = context.read<BankProvider>();
+  final messenger = ScaffoldMessenger.of(context);
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Archive ${unit.name}?'),
+      content: const Text(
+        'It is hidden from Banks, practice and alarms set to all topics. '
+        'Nothing is deleted: your answers and reports stay. You can '
+        'restore it at any time.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Archive'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return false;
+  await bank.setArchived(unit.id, true);
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text('${unit.name} archived. Restore it from Banks.'),
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () => bank.setArchived(unit.id, false),
+        ),
+      ),
+    );
+  return true;
+}
 
 class UnitScreen extends StatelessWidget {
   final StudyUnit unit;
@@ -27,13 +69,14 @@ class UnitScreen extends StatelessWidget {
       (n, t) => n + bank.statsOf(t.id).mastered,
     );
     final share = total == 0 ? 0.0 : mastered / total;
+    final archived = bank.isArchived(unit.id);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(unit.name),
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 12),
+            padding: const EdgeInsets.only(right: 4),
             child: FilledButton.icon(
               onPressed: () => showAddTopicDialog(context),
               icon: const Icon(Icons.add_rounded, size: 18),
@@ -43,6 +86,24 @@ class UnitScreen extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 14),
               ),
             ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            onSelected: (_) async {
+              if (archived) {
+                await bank.setArchived(unit.id, false);
+              } else if (await confirmArchiveUnit(context, unit) &&
+                  context.mounted) {
+                // Back to Banks, where the unit has just left the list.
+                Navigator.pop(context);
+              }
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'archive',
+                child: Text(archived ? 'Restore unit' : 'Archive unit'),
+              ),
+            ],
           ),
         ],
       ),
@@ -54,6 +115,27 @@ class UnitScreen extends StatelessWidget {
           24 + MediaQuery.paddingOf(context).bottom,
         ),
         children: [
+          if (archived)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.inventory_2_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Archived. Hidden from Banks and from alarms set to '
+                      'all topics. Nothing was deleted.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => bank.setArchived(unit.id, false),
+                    child: const Text('Restore'),
+                  ),
+                ],
+              ),
+            ),
           GlossCard(
             padding: const EdgeInsets.all(18),
             child: Column(

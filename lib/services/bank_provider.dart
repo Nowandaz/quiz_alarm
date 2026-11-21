@@ -12,6 +12,11 @@ class BankProvider extends ChangeNotifier {
   List<StudyUnit> units = [];
   List<Topic> topics = [];
   Map<String, TopicStats> stats = {};
+
+  /// Ids of the units the user archived. They stay in [units] and
+  /// [topics] (an alarm set on one still works and is still described);
+  /// the screens that offer choices use [activeUnits] / [activeTopics].
+  Set<String> archived = {};
   bool isLoading = true;
   String? error;
 
@@ -25,6 +30,7 @@ class BankProvider extends ChangeNotifier {
       final u = await QuestionRepository.getUnits();
       final t = await QuestionRepository.getTopics();
       final s = await QuestionRepository.getStats();
+      archived = await QuestionRepository.getArchivedUnits();
       units = u;
       topics = t;
       stats = s;
@@ -41,16 +47,45 @@ class BankProvider extends ChangeNotifier {
 
   TopicStats statsOf(String topicId) => stats[topicId] ?? const TopicStats();
 
+  bool isArchived(String unitId) => archived.contains(unitId);
+
+  /// Units that are not archived: what Banks, the topic picker and
+  /// practice set-up offer.
+  List<StudyUnit> get activeUnits =>
+      units.where((u) => !archived.contains(u.id)).toList();
+
+  List<StudyUnit> get archivedUnits =>
+      units.where((u) => archived.contains(u.id)).toList();
+
+  /// Topics of the units that are not archived.
+  List<Topic> get activeTopics =>
+      topics.where((t) => !archived.contains(t.unitId)).toList();
+
+  /// Hides a unit or brings it back. Only hides: nothing is deleted.
+  Future<void> setArchived(String unitId, bool value) async {
+    await QuestionRepository.setUnitArchived(unitId, value);
+    await reload();
+  }
+
   /// Short label for a stored selection, e.g. "Pharmacology".
-  String describe(Iterable<String> selectors) =>
-      QuestionRepository.describeIn(selectors, units, topics);
+  String describe(Iterable<String> selectors) => QuestionRepository.describeIn(
+    selectors,
+    units,
+    topics,
+    archived: archived,
+  );
 
   /// Topic ids a stored selection stands for. Empty selection = empty set
   /// here (the caller shows that as "All topics").
   Set<String> selectedIds(Iterable<String> selectors) =>
       selectors.where((s) => s.trim().isNotEmpty).isEmpty
       ? <String>{}
-      : QuestionRepository.resolveIn(selectors, units, topics).toSet();
+      : QuestionRepository.resolveIn(
+          selectors,
+          units,
+          topics,
+          archived: archived,
+        ).toSet();
 
   @override
   void dispose() {

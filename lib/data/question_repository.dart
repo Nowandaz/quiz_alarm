@@ -368,14 +368,40 @@ class QuestionRepository {
     );
   }
 
+  // -------------------------------------------------------- archived units
+
+  /// Preference holding the ids of archived units. It lives outside the
+  /// database because a bank sync rewrites the units table.
+  static const String archivedUnitsPref = 'archived_units';
+
+  /// Ids of the units the user archived. An archived unit is only hidden:
+  /// its questions, answers and sessions all stay.
+  static Future<Set<String>> getArchivedUnits() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(archivedUnitsPref) ?? const []).toSet();
+  }
+
+  /// Hides a unit ([archived] true) or brings it back. Nothing is deleted
+  /// either way.
+  static Future<void> setUnitArchived(String unitId, bool archived) async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = (prefs.getStringList(archivedUnitsPref) ?? const []).toSet();
+    if (!(archived ? ids.add(unitId) : ids.remove(unitId))) return;
+    await prefs.setStringList(archivedUnitsPref, ids.toList()..sort());
+  }
+
   /// Turns what an alarm or a session stores (topic ids, unit ids, or names
   /// from older versions) into topic ids. Empty or unknown input means
-  /// every topic.
+  /// every topic, leaving out the units in [archived]. A unit or topic
+  /// that is named still counts when archived: an alarm set on it keeps
+  /// working. If every unit is archived, "every topic" really is every
+  /// topic, because an alarm must always have questions to ask.
   static List<String> resolveIn(
     Iterable<String> selectors,
     List<StudyUnit> units,
-    List<Topic> topics,
-  ) {
+    List<Topic> topics, {
+    Set<String> archived = const {},
+  }) {
     final ids = <String>{};
     for (final raw in selectors) {
       final s = raw.trim().toLowerCase();
@@ -392,25 +418,37 @@ class QuestionRepository {
         }
       }
     }
-    if (ids.isEmpty) return topics.map((t) => t.id).toList();
-    return ids.toList();
+    if (ids.isNotEmpty) return ids.toList();
+    final active = [
+      for (final t in topics)
+        if (!archived.contains(t.unitId)) t.id,
+    ];
+    return active.isEmpty ? topics.map((t) => t.id).toList() : active;
   }
 
   static Future<List<String>> resolveTopicIds(
     Iterable<String> selectors,
-  ) async => resolveIn(selectors, await getUnits(), await getTopics());
+  ) async => resolveIn(
+    selectors,
+    await getUnits(),
+    await getTopics(),
+    archived: await getArchivedUnits(),
+  );
 
   /// A short human label for what [selectors] cover, e.g.
   /// "Pharmacology" or "Antimicrobials, CNS drugs".
   static String describeIn(
     Iterable<String> selectors,
     List<StudyUnit> units,
-    List<Topic> topics,
-  ) {
+    List<Topic> topics, {
+    Set<String> archived = const {},
+  }) {
     final wanted = selectors.where((s) => s.trim().isNotEmpty).toList();
     if (wanted.isEmpty || topics.isEmpty) return 'All topics';
-    final ids = resolveIn(wanted, units, topics).toSet();
-    if (ids.length == topics.length) return 'All topics';
+    final ids = resolveIn(wanted, units, topics, archived: archived).toSet();
+    // The same set an empty selection stands for.
+    final all = resolveIn(const [], units, topics, archived: archived);
+    if (ids.length == all.length && ids.containsAll(all)) return 'All topics';
 
     final parts = <String>[];
     for (final u in units) {
@@ -430,7 +468,12 @@ class QuestionRepository {
   }
 
   static Future<String> describeSelection(Iterable<String> selectors) async =>
-      describeIn(selectors, await getUnits(), await getTopics());
+      describeIn(
+        selectors,
+        await getUnits(),
+        await getTopics(),
+        archived: await getArchivedUnits(),
+      );
 
   // ------------------------------------------------------------- questions
 
@@ -732,8 +775,9 @@ class QuestionRepository {
         .toList();
   }
 
-  /// Totals, the last [days] days and per-topic accuracy for the Reports
-  /// tab. [now] is only passed by tests.
+  /// Totals, the last [days] days, trends and per-topic accuracy for the
+  /// Reports tab. Archived units are included: archiving hides a unit, it
+  /// does not rewrite history. [now] is only passed by tests.
   static Future<ReportSummary> getReport({int days = 14, DateTime? now}) async {
     await ensureReady();
     final db = await _db;
@@ -760,7 +804,7 @@ class QuestionRepository {
     }
 
     final topicRows = await db.rawQuery(
-      'SELECT t.name AS name, COUNT(*) AS n, SUM(a.correct) AS c '
+      'SELECT t.id AS id, t.name AS name, COUNT(*) AS n, SUM(a.correct) AS c '
       'FROM attempts a JOIN questions q ON q.id = a.question_id '
       'JOIN topics t ON t.id = q.topic_id GROUP BY t.id',
     );
@@ -771,6 +815,7 @@ class QuestionRepository {
                 r['name'] as String,
                 (r['n'] as int?) ?? 0,
                 (r['c'] as int?) ?? 0,
+                id: r['id'] as String,
               ),
             )
             .toList()
@@ -783,6 +828,14 @@ class QuestionRepository {
     )).first;
     final dismissed = (wake['n'] as int?) ?? 0;
 
+    final dayStats = [
+      for (var i = 0; i < days; i++)
+        DayStat(
+          DateTime(firstDay.year, firstDay.month, firstDay.day + i),
+          answered[i],
+          correct[i],
+        ),
+    ];
     return ReportSummary(
       answered: (totals['n'] as int?) ?? 0,
       correct: (totals['c'] as int?) ?? 0,
@@ -791,15 +844,131 @@ class QuestionRepository {
           ? null
           : Duration(milliseconds: (wake['ms'] as num).round()),
       avgWakeQuestions: dismissed == 0 ? null : (wake['q'] as num).toDouble(),
-      days: [
-        for (var i = 0; i < days; i++)
-          DayStat(
-            DateTime(firstDay.year, firstDay.month, firstDay.day + i),
-            answered[i],
-            correct[i],
+      days: dayStats,
+      topics: topics,
+      trends: await _trends(db, today, dayStats),
+    );
+  }
+
+  /// The last 14 days against the 14 days before, and this week against
+  /// last week. Two grouped queries; [days] (the per-day counts already
+  /// worked out for the chart) says which days of this week had answers.
+  static Future<ReportTrends> _trends(
+    Database db,
+    DateTime today,
+    List<DayStat> days,
+  ) async {
+    const span = 14;
+    int ms(DateTime t) => t.millisecondsSinceEpoch;
+    int n(Object? v) => (v as num?)?.toInt() ?? 0;
+    // Midnights: periods are whole calendar days, today included.
+    final recentStart = DateTime(
+      today.year,
+      today.month,
+      today.day - (span - 1),
+    );
+    final previousStart = DateTime(
+      today.year,
+      today.month,
+      today.day - (2 * span - 1),
+    );
+    final end = DateTime(today.year, today.month, today.day + 1);
+    final monday = DateTime(
+      today.year,
+      today.month,
+      today.day - (today.weekday - 1),
+    );
+    final lastMonday = DateTime(monday.year, monday.month, monday.day - 7);
+
+    // (Plain "?" placeholders, repeated: numbered ones are not handled the
+    // same way by every platform's SQLite binding.)
+    final r0 = ms(recentStart);
+    final t = (await db.rawQuery(
+      'SELECT '
+      'SUM(CASE WHEN answered_at >= ? THEN 1 ELSE 0 END) AS n, '
+      'SUM(CASE WHEN answered_at >= ? THEN correct ELSE 0 END) AS c, '
+      'SUM(CASE WHEN answered_at < ? THEN 1 ELSE 0 END) AS pn, '
+      'SUM(CASE WHEN answered_at < ? THEN correct ELSE 0 END) AS pc, '
+      'SUM(CASE WHEN answered_at >= ? THEN 1 ELSE 0 END) AS week, '
+      'SUM(CASE WHEN answered_at >= ? AND answered_at < ? '
+      'THEN 1 ELSE 0 END) AS last_week '
+      'FROM attempts WHERE answered_at >= ? AND answered_at < ?',
+      [
+        r0,
+        r0,
+        r0,
+        r0,
+        ms(monday),
+        ms(lastMonday),
+        ms(monday),
+        ms(previousStart),
+        ms(end),
+      ],
+    )).first;
+
+    final rows = await db.rawQuery(
+      'SELECT t.id AS id, t.name AS name, '
+      'SUM(CASE WHEN a.answered_at >= ? THEN 1 ELSE 0 END) AS n, '
+      'SUM(CASE WHEN a.answered_at >= ? THEN a.correct ELSE 0 END) AS c, '
+      'SUM(CASE WHEN a.answered_at < ? THEN 1 ELSE 0 END) AS pn, '
+      'SUM(CASE WHEN a.answered_at < ? THEN a.correct ELSE 0 END) AS pc '
+      'FROM attempts a JOIN questions q ON q.id = a.question_id '
+      'JOIN topics t ON t.id = q.topic_id '
+      'WHERE a.answered_at >= ? AND a.answered_at < ? GROUP BY t.id',
+      [r0, r0, r0, r0, ms(previousStart), ms(end)],
+    );
+    final perTopic = [
+      for (final r in rows)
+        TopicTrend(
+          id: r['id'] as String,
+          topic: r['name'] as String,
+          answered: n(r['n']),
+          correct: n(r['c']),
+          previousAnswered: n(r['pn']),
+          previousCorrect: n(r['pc']),
+        ),
+    ];
+    const enough = ReportTrends.minAnswers;
+    final improving =
+        perTopic
+            .where(
+              (t) =>
+                  t.answered >= enough &&
+                  t.previousAnswered >= enough &&
+                  t.change > 0,
+            )
+            .toList()
+          ..sort((a, b) {
+            final byChange = b.change.compareTo(a.change);
+            return byChange != 0 ? byChange : a.topic.compareTo(b.topic);
+          });
+    // A topic answered perfectly has nothing to revise.
+    final weak =
+        perTopic
+            .where((t) => t.answered >= enough && t.correct < t.answered)
+            .toList()
+          ..sort((a, b) {
+            final byAccuracy = a.accuracy.compareTo(b.accuracy);
+            return byAccuracy != 0 ? byAccuracy : a.topic.compareTo(b.topic);
+          });
+
+    return ReportTrends(
+      answered: n(t['n']),
+      correct: n(t['c']),
+      previousAnswered: n(t['pn']),
+      previousCorrect: n(t['pc']),
+      thisWeek: n(t['week']),
+      lastWeek: n(t['last_week']),
+      weekDays: [
+        for (var i = 0; i < 7; i++)
+          days.any(
+            (d) =>
+                d.answered > 0 &&
+                d.day == DateTime(monday.year, monday.month, monday.day + i),
           ),
       ],
-      topics: topics,
+      improving: improving.take(3).toList(),
+      needsRevision: weak.take(3).toList(),
     );
   }
 }

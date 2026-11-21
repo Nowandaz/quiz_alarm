@@ -1,4 +1,5 @@
-/// Add / edit one alarm: time, repeat days, name, topics, ringtone, fade.
+/// Add / edit one alarm: time, repeat days, name, topics, difficulty,
+/// ringtone, fade and snooze, with a summary of the result above Done.
 library;
 
 import 'dart:io';
@@ -14,6 +15,8 @@ import '../models/models.dart';
 import '../services/alarm_provider.dart';
 import '../services/bank_provider.dart';
 import '../services/theme_provider.dart';
+import '../theme/app_theme.dart';
+import '../widgets/app_widgets.dart';
 import '../widgets/time_wheel.dart';
 import '../widgets/topic_picker.dart';
 
@@ -96,7 +99,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     _audioName = _nameOf(_audioPath);
     _vibrate = a?.vibrate ?? true;
     _fadeDuration = a?.fadeDuration ?? 30.0; // new alarms fade in gently
-    _requiredStreak = a?.requiredStreak ?? 2;
+    _requiredStreak = a?.requiredStreak ?? AlarmItem.easyStreak;
     _snoozeMinutes = a?.snoozeMinutes ?? 5;
 
     if (a != null && a.activeDays.isNotEmpty) {
@@ -122,14 +125,17 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
 
   List<int> get _activeDays => _repeatMode == 1 ? _customDays : const [];
 
-  String _getTimeUntil() {
-    final now = DateTime.now();
-    final next = calculateNextTrigger(_selectedTime, _activeDays, now);
-    return 'This alarm rings ${describeTimeUntil(next, now)}';
-  }
-
   bool _sameDays(List<int> a, List<int> b) =>
       a.length == b.length && a.toSet().containsAll(b);
+
+  /// Whether the alarm will be switched on once saved. Editing the name
+  /// or topics of a switched-off alarm must not switch it on. Changing
+  /// when it rings does, as in other clock apps.
+  bool get _willBeOn =>
+      widget.existingAlarm == null ||
+      widget.existingAlarm!.isEnabled ||
+      widget.existingAlarm!.time != _selectedTime ||
+      !_sameDays(widget.existingAlarm!.activeDays, _activeDays);
 
   void _saveAlarm() {
     final provider = Provider.of<AlarmProvider>(context, listen: false);
@@ -148,13 +154,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       volume: widget.existingAlarm?.volume ?? 1.0,
       requiredStreak: _requiredStreak,
       snoozeMinutes: _snoozeMinutes,
-      // Editing the name or topics of a switched-off alarm must not switch
-      // it on. Changing when it rings does, as in other clock apps.
-      isEnabled:
-          widget.existingAlarm == null ||
-          widget.existingAlarm!.isEnabled ||
-          widget.existingAlarm!.time != _selectedTime ||
-          !_sameDays(widget.existingAlarm!.activeDays, _activeDays),
+      isEnabled: _willBeOn,
     );
 
     // The confirmation shows on the screen underneath once the phone has
@@ -214,8 +214,10 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     );
     if (picked == null || !mounted) return;
     // Every topic ticked is the same as "all topics", which also covers
-    // topics added later.
-    final all = picked.length == bank.topics.length;
+    // topics added later. (Topics of archived units are not part of "all".)
+    final everything = bank.activeTopics.map((t) => t.id).toSet();
+    final all =
+        picked.length == everything.length && picked.containsAll(everything);
     setState(() => _topics = all ? [] : picked.toList());
   }
 
@@ -473,13 +475,16 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Snooze length',
+                'Mercy snooze',
                 style: Theme.of(sheetContext).textTheme.titleLarge,
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
                 child: Text(
-                  'The snooze button appears after 5 wrong answers in a row.',
+                  'The snooze button unlocks after '
+                  '${AlarmItem.wrongAnswersForSnooze} wrong answers in a '
+                  'row. One right answer resets that count. A wrong answer '
+                  'also resets your streak of correct answers.',
                   style: Theme.of(sheetContext).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),
@@ -502,13 +507,16 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     );
   }
 
+  /// "Medium: 3 in a row".
   String _difficultyText(int streak) =>
-      '${AlarmItem.difficultyName(streak)}: $streak correct in a row';
+      '${AlarmItem.difficultyName(streak)}: $streak in a row';
 
   void _showDifficultyPicker() {
-    const presets = [2, 3, 5];
+    const presets = AlarmItem.presetStreaks;
+    const low = AlarmItem.customMinStreak;
+    const high = AlarmItem.customMaxStreak;
     var custom = !presets.contains(_requiredStreak);
-    var customValue = custom ? _requiredStreak.clamp(6, 15) : 6;
+    var customValue = custom ? _requiredStreak.clamp(low, high) : low;
 
     showModalBottomSheet<void>(
       context: context,
@@ -532,8 +540,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 4, 24, 8),
                   child: Text(
-                    'How many questions you must get right in a row to '
-                    'switch the alarm off. A wrong answer restarts the count.',
+                    'A wrong answer resets the streak to zero.',
                     style: Theme.of(sheetContext).textTheme.bodySmall,
                     textAlign: TextAlign.center,
                   ),
@@ -541,7 +548,12 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 for (final streak in presets)
                   ListTile(
                     title: Text(AlarmItem.difficultyName(streak)),
-                    subtitle: Text('$streak correct in a row'),
+                    // Says what the choice means before it is saved.
+                    subtitle: Text(
+                      '${AlarmItem.difficultyMeaning(streak)} '
+                              '${AlarmItem.difficultyEffort(streak)}'
+                          .trim(),
+                    ),
                     trailing: !custom && _requiredStreak == streak
                         ? const Icon(Icons.check)
                         : null,
@@ -551,8 +563,8 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                   title: const Text('Custom'),
                   subtitle: Text(
                     custom
-                        ? '$customValue correct in a row'
-                        : '6 to 15 correct in a row',
+                        ? AlarmItem.difficultyMeaning(customValue)
+                        : '$low to $high correct answers in a row.',
                   ),
                   trailing: custom ? const Icon(Icons.check) : null,
                   onTap: () => choose(customValue, isCustom: true),
@@ -562,12 +574,12 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Row(
                       children: [
-                        const Text('6'),
+                        const Text('$low'),
                         Expanded(
                           child: Slider(
-                            min: 6,
-                            max: 15,
-                            divisions: 9,
+                            min: low.toDouble(),
+                            max: high.toDouble(),
+                            divisions: high - low,
                             label: '$customValue',
                             value: customValue.toDouble(),
                             onChanged: (v) {
@@ -576,7 +588,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                             },
                           ),
                         ),
-                        const Text('15'),
+                        const Text('$high'),
                       ],
                     ),
                   ),
@@ -641,8 +653,35 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     final cardColor = scheme.surfaceContainerHighest;
     final bank = context.watch<BankProvider>();
     final muted = TextStyle(color: scheme.onSurfaceVariant);
+    final use24 = context.watch<ThemeProvider>().use24Hour;
 
     return Scaffold(
+      // Always in view, so what will be saved can be checked at any moment
+      // without scrolling. Re-read every half minute because "in 9 hours"
+      // goes stale while the screen is open.
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              EveryHalfMinute(
+                builder: (context) => _SummaryCard(
+                  time: formatTimeOfDay(_selectedTime, use24Hour: use24),
+                  days: AlarmItem.describeDays(_activeDays),
+                  topics: bank.describe(_topics),
+                  difficulty: _difficultyText(_requiredStreak),
+                  snooze: '$_snoozeMinutes-minute mercy snooze',
+                  rings: _ringsText(use24),
+                ),
+              ),
+              const SizedBox(height: 8),
+              PrimaryButton(label: 'Done', height: 48, onPressed: _saveAlarm),
+            ],
+          ),
+        ),
+      ),
       appBar: AppBar(
         leading: TextButton(
           onPressed: () => Navigator.pop(context),
@@ -672,9 +711,6 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
           24 + MediaQuery.paddingOf(context).bottom,
         ),
         children: [
-          Center(child: Text(_getTimeUntil(), style: muted)),
-          const SizedBox(height: 16),
-
           // Time Picker (Cupertino Style)
           Container(
             height: 200,
@@ -814,7 +850,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 ListTile(
                   title: const Text('Snooze'),
                   subtitle: Text(
-                    '$_snoozeMinutes minutes, after 5 wrong answers in a row',
+                    'Mercy snooze: $_snoozeMinutes minutes. Unlocks after '
+                    '${AlarmItem.wrongAnswersForSnooze} wrong answers in a '
+                    'row.',
                     style: muted,
                   ),
                   trailing: const Icon(Icons.chevron_right),
@@ -836,6 +874,17 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
         ],
       ),
     );
+  }
+
+  /// "Rings tomorrow 7:00 AM, in 9 hours": when the alarm as it stands
+  /// would first ring.
+  String _ringsText(bool use24) {
+    if (!_willBeOn) return 'Stays off until you switch it on.';
+    final now = DateTime.now();
+    final next = calculateNextTrigger(_selectedTime, _activeDays, now);
+    return 'Rings ${describeDay(next, now)} '
+        '${formatClock(next, use24Hour: use24)}, '
+        '${describeTimeUntil(next, now)}';
   }
 
   Widget _buildDayBubble(String label, int dayIndex, ColorScheme scheme) {
@@ -864,11 +913,84 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     );
   }
 
-  String _getCustomDaysText() {
-    if (_customDays.isEmpty) return 'No days picked: rings once';
-    if (_customDays.length == 7) return 'Every day';
-    const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final sorted = [..._customDays]..sort();
-    return sorted.map((d) => names[d - 1]).join(', ');
+  String _getCustomDaysText() => _customDays.isEmpty
+      ? 'No days picked: rings once'
+      : AlarmItem.describeDays(_customDays);
+}
+
+/// The alarm as it will be saved, in three short lines: when, what it
+/// asks, and when it first rings.
+class _SummaryCard extends StatelessWidget {
+  final String time;
+  final String days;
+  final String topics;
+  final String difficulty;
+  final String snooze;
+  final String rings;
+  const _SummaryCard({
+    required this.time,
+    required this.days,
+    required this.topics,
+    required this.difficulty,
+    required this.snooze,
+    required this.rings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$time \u00b7 $days',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AppTheme.display,
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '$topics \u00b7 $difficulty \u00b7 $snooze',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(
+                Icons.notifications_active_rounded,
+                size: 15,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  rings,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }

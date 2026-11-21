@@ -184,45 +184,26 @@ class _AlarmTabState extends State<AlarmTab> {
                             // Tap to switch between digital and analog.
                             const ClockDisplay(),
                             const SizedBox(height: 16),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.onSurface.withValues(
-                                  alpha: 0.07,
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    next == null
-                                        ? Icons.notifications_off_rounded
-                                        : Icons.notifications_active_rounded,
-                                    size: 18,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      next == null
-                                          ? 'No alarm is switched on'
-                                          // Which ring is next, then how
-                                          // long until it.
-                                          : 'Next: '
-                                                '${DateFormat('EEE').format(next.$2)} '
-                                                '${formatClock(next.$2, use24Hour: use24)}'
-                                                ' \u00b7 '
-                                                '${describeTimeUntil(next.$2, now)}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            _NextAlarmLine(
+                              text: next != null
+                                  // Which ring is next, then how long
+                                  // until it.
+                                  ? 'Next: '
+                                        '${DateFormat('EEE').format(next.$2)} '
+                                        '${formatClock(next.$2, use24Hour: use24)}'
+                                        ' \u00b7 '
+                                        '${describeTimeUntil(next.$2, now)}'
+                                  : provider.alarms.isEmpty
+                                  ? 'No alarms yet'
+                                  : 'No alarm is on. Add an alarm to start '
+                                        'your morning quiz.',
+                              on: next != null,
+                              // With alarms that are all off, the line is
+                              // the way to a new one. With none at all the
+                              // welcome card below already offers it.
+                              onTap: next == null && provider.alarms.isNotEmpty
+                                  ? () => _openEditor(context)
+                                  : null,
                             ),
                           ],
                         ),
@@ -307,10 +288,7 @@ class _AlarmTabState extends State<AlarmTab> {
                     ),
                   const SizedBox(height: 4),
                   if (provider.alarms.isEmpty)
-                    _EmptyAlarms(
-                      key: TourKeys.addAlarm,
-                      onAdd: () => _openEditor(context),
-                    ),
+                    _EmptyAlarms(onAdd: () => _openEditor(context)),
                   _AlarmList(
                     alarms: provider.alarms,
                     itemBuilder: (a) => Padding(
@@ -446,39 +424,117 @@ class _AlarmListState extends State<_AlarmList> {
   }
 }
 
+/// The line at the bottom of the clock card: when the next alarm rings,
+/// or that none will. With [onTap] it is a prompt that opens the editor.
+class _NextAlarmLine extends StatelessWidget {
+  final String text;
+  final bool on;
+  final VoidCallback? onTap;
+  const _NextAlarmLine({required this.text, required this.on, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.onSurface.withValues(alpha: 0.07),
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                on
+                    ? Icons.notifications_active_rounded
+                    : Icons.notifications_off_rounded,
+                size: 18,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (onTap != null)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: scheme.onSurfaceVariant,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown before the first alarm exists: how the app works in three steps
+/// and the one thing to do next.
 class _EmptyAlarms extends StatelessWidget {
   final VoidCallback onAdd;
-  const _EmptyAlarms({super.key, required this.onAdd});
+  const _EmptyAlarms({required this.onAdd});
+
+  static const List<String> _steps = [
+    'Set an alarm.',
+    'When it rings, answer questions from your topics.',
+    'Get enough right in a row and it stops.',
+  ];
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(20),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Icon(Icons.alarm_add_rounded, size: 32),
-            ),
-            const SizedBox(height: 14),
-            Text('No alarms yet', style: theme.textTheme.titleLarge),
+            Text('Welcome to BrainWake', style: theme.textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              'Set one and wake up by answering questions.',
+              'An alarm that only stops when you answer revision questions.',
               style: theme.textTheme.bodySmall,
-              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
+            for (var i = 0; i < _steps.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: scheme.onSurface.withValues(alpha: 0.08),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '${i + 1}',
+                        style: const TextStyle(
+                          fontFamily: AppTheme.display,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(_steps[i])),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 4),
+            // The only add button on screen in this state, so the tour
+            // points here.
             PrimaryButton(
+              key: TourKeys.addAlarm,
               icon: Icons.add_rounded,
-              label: 'Add alarm',
+              label: 'Add your first alarm',
               onPressed: onAdd,
             ),
           ],

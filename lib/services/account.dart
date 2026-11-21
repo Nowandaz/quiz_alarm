@@ -17,6 +17,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'server_config.dart';
+import 'sync_service.dart';
 
 /// What happened when someone tried to create an account.
 class SignUpResult {
@@ -422,6 +423,43 @@ class Account extends ChangeNotifier {
     } catch (_) {
       // Signed out on this phone either way.
     }
+  }
+
+  /// Deletes the account and everything the server holds for it, for
+  /// good. On success this phone is signed out and the person's history
+  /// is cleared from it, so the next account starts clean (alarms stay:
+  /// they belong to the phone). Returns null on success, otherwise a
+  /// sentence to show; nothing is changed on the phone when it fails.
+  Future<String?> deleteAccount() async {
+    final token = await accessToken();
+    if (token == null) return _network('signed out or offline');
+    try {
+      final res = await httpClient
+          .post(
+            Uri.parse(
+              '${ServerConfig.supabaseUrl}/rest/v1/rpc/delete_my_account',
+            ),
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': ServerConfig.supabaseKey,
+              'Authorization': 'Bearer $token',
+            },
+            body: '{}',
+          )
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200 && res.statusCode != 204) return _reason(res);
+    } catch (e) {
+      return _network(e);
+    }
+    try {
+      await SyncService.forgetLocalHistory();
+    } catch (e) {
+      // The account is gone either way; signing out must still happen.
+      debugPrint('Clearing local history failed: $e');
+    }
+    // No call to the server's sign-out: the account no longer exists.
+    await _clear();
+    return null;
   }
 
   /// A token that proves who the user is to the server, refreshed when it

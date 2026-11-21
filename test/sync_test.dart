@@ -367,6 +367,52 @@ void main() {
       expect(server.tables['alarm_events']!.length, 2);
     });
 
+    test('with diagnostics switched off the alarm diary stays on the '
+        'phone; a problem report still goes', () async {
+      await start(signedIn: true);
+      SharedPreferences.setMockInitialValues({
+        SyncService.shareDiagnosticsPref: false,
+      });
+      await AlarmLog.add('scheduled', alarmId: 5);
+      await AlarmLog.add('rang', alarmId: 5, detail: {'late_seconds': 2});
+      await AlarmLog.add('report', alarmId: 5, detail: {'problem': 'late'});
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      expect(server.tables['alarm_events']!.map((r) => r['type']), ['report']);
+      // Still on the phone for the user's own report screen.
+      expect((await AlarmLog.recent()).length, 3);
+
+      // Switching it back on sends what happens from then on, not what
+      // was recorded while it was off.
+      (await SharedPreferences.getInstance()).setBool(
+        SyncService.shareDiagnosticsPref,
+        true,
+      );
+      await AlarmLog.add('dismissed', alarmId: 5);
+      await SyncService.run();
+      expect(server.tables['alarm_events']!.map((r) => r['type']), [
+        'report',
+        'dismissed',
+      ]);
+    });
+
+    test('the settings backup carries the theme and the heads-up '
+        'choice', () async {
+      await start(signedIn: true);
+      SharedPreferences.setMockInitialValues({
+        'themeMode': 'system',
+        'use24Hour': true,
+        'headsUp': false,
+      });
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      expect(server.tables['user_backups']!.single['settings'], {
+        'themeMode': 'system',
+        'use24Hour': true,
+        'headsUp': false,
+      });
+    });
+
     test('nothing personal is sent when signed out', () async {
       await start();
       await answerOne();
