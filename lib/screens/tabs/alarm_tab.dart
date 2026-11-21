@@ -39,6 +39,7 @@ class _AlarmTabState extends State<AlarmTab> {
 
   Future<void> _deleteSelected(AlarmProvider provider) async {
     final n = _selected.length;
+    final messenger = ScaffoldMessenger.of(context);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -59,7 +60,11 @@ class _AlarmTabState extends State<AlarmTab> {
     if (ok != true) return;
     final ids = _selected.toList();
     setState(_selected.clear);
-    await provider.deleteAlarms(ids);
+    if (await provider.deleteAlarms(ids) > 0) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text(AlarmProvider.snoozeLockMessage)),
+      );
+    }
   }
 
   /// When the soonest enabled alarm will ring, and which one it is.
@@ -83,7 +88,16 @@ class _AlarmTabState extends State<AlarmTab> {
   Future<void> _setEnabled(AlarmProvider provider, AlarmItem card, bool on) {
     final messenger = ScaffoldMessenger.of(context);
     final use24 = context.read<ThemeProvider>().use24Hour;
-    return provider.setEnabled(card, on).then((_) {
+    return provider.setEnabled(card, on).then((done) {
+      if (!done) {
+        // Snoozed once: switching it off would be a way round the quiz.
+        messenger
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(content: Text(AlarmProvider.snoozeLockMessage)),
+          );
+        return;
+      }
       // The card may hold the alarm as it was before an edit.
       final alarm = provider.alarms.where((a) => a.id == card.id).firstOrNull;
       if (alarm == null) return; // deleted meanwhile

@@ -203,18 +203,6 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
 
   int get _missedCount => _results.where((r) => !r.correct).length;
 
-  /// The alarm was switched off with the "Turn off" button that appears
-  /// after two snoozes, not by finishing the quiz.
-  bool _turnedOff = false;
-
-  /// Snoozed often enough that it may be switched off without the quiz.
-  late final bool _canTurnOff =
-      !widget.preview &&
-      Provider.of<AlarmProvider>(
-        context,
-        listen: false,
-      ).canTurnOff(widget.alarm);
-
   Future<void> _submitAnswer(String answer) async {
     final q = _currentQuestion;
     if (q == null || _phase != _Phase.asking || answer.trim().isEmpty) return;
@@ -305,23 +293,6 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                       ),
                       // Filled, so it is easy to find half asleep. Gone once
                       // the alarm is snoozed or off (the "done" view).
-                      if (_canTurnOff && _phase != _Phase.done)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: const Size.fromHeight(52),
-                            ),
-                            onPressed: () {
-                              _turnedOff = true;
-                              _finish('dismissed');
-                            },
-                            icon: const Icon(Icons.alarm_off_rounded),
-                            label: const Text(
-                              'Turn off alarm (snoozed twice already)',
-                            ),
-                          ),
-                        ),
                       if (_wrongStreak >= _wrongForSnooze &&
                           _phase != _Phase.done)
                         Padding(
@@ -554,9 +525,12 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             const SizedBox(height: 6),
             Text(
               snoozed
-                  ? 'Switch the alarm off on the Alarms tab to cancel it.'
-                  : _turnedOff
-                  ? 'Turned off after two snoozes.'
+                  ? (Provider.of<AlarmProvider>(
+                          context,
+                          listen: false,
+                        ).canTurnOff(widget.alarm)
+                        ? 'You can now switch it off on the Alarms tab.'
+                        : AlarmProvider.snoozeLockMessage)
                   : '$_needed in a row. Well done.',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white54),
