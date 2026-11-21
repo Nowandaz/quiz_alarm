@@ -1,9 +1,7 @@
 package com.example.quiz_alarm
 
 import android.app.ActivityManager
-import android.app.AlarmManager
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -40,17 +38,6 @@ class MainActivity : FlutterActivity() {
         // The alarm whose heads-up notification had "Skip" tapped.
         @JvmStatic
         var pendingSkipAlarm: Int? = null
-    }
-
-    private fun preAlarmIntent(id: Int, title: String?, body: String?): PendingIntent {
-        val intent = Intent(this, PreAlarmReceiver::class.java)
-            .putExtra("alarm_id", id)
-            .putExtra("title", title)
-            .putExtra("body", body)
-        return PendingIntent.getBroadcast(
-            this, id, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
     }
 
     private var channel: MethodChannel? = null
@@ -95,22 +82,13 @@ class MainActivity : FlutterActivity() {
                     }
                     "schedulePreAlarm" -> {
                         try {
-                            val id = call.argument<Int>("id") ?: 0
-                            val at = call.argument<Number>("at")?.toLong() ?: 0L
-                            val pending = preAlarmIntent(
-                                id, call.argument<String>("title"), call.argument<String>("body")
+                            PreAlarms.schedule(
+                                applicationContext,
+                                call.argument<Int>("id") ?: 0,
+                                call.argument<Number>("at")?.toLong() ?: 0L,
+                                call.argument<String>("title"),
+                                call.argument<String>("body")
                             )
-                            val alarms = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                            val exact = Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()
-                            try {
-                                if (exact) {
-                                    alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-                                } else {
-                                    alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-                                }
-                            } catch (e: SecurityException) {
-                                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pending)
-                            }
                             result.success(true)
                         } catch (e: Exception) {
                             result.success(false)
@@ -118,12 +96,7 @@ class MainActivity : FlutterActivity() {
                     }
                     "cancelPreAlarm" -> {
                         try {
-                            val id = call.argument<Int>("id") ?: 0
-                            val alarms = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-                            alarms.cancel(preAlarmIntent(id, null, null))
-                            val manager =
-                                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                            manager.cancel(PreAlarmReceiver.notificationId(id))
+                            PreAlarms.cancel(applicationContext, call.argument<Int>("id") ?: 0)
                             result.success(true)
                         } catch (e: Exception) {
                             result.success(false)

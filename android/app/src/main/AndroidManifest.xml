@@ -60,6 +60,15 @@
         </activity>
         <!-- Shows the "alarm in 5 minutes" heads-up notification. -->
         <receiver android:name=".PreAlarmReceiver" android:exported="false"/>
+        <!-- Puts the heads-up notifications back after the phone restarts or
+             the app is updated, without the app having to be opened. -->
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
         <!-- Shows the "alarm may not ring" notice if the app is force-closed
              (alarm plugin, enableNotificationOnKill). -->
         <service android:name="com.gdelataillade.alarm.services.NotificationOnKillService" />
