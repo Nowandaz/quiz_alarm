@@ -21,6 +21,7 @@ import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
 import '../widgets/shake_widget.dart';
+import 'practice_results.dart';
 
 class AlarmRingScreen extends StatefulWidget {
   final AlarmItem alarm;
@@ -163,12 +164,30 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
     if (!mounted) return;
     if (result == 'dismissed' || _snoozedUntil != null) {
       setState(() => _phase = _Phase.done);
+      // Longer when there is something to tap (the review button).
+      final offerReview = _snoozedUntil == null && _missedCount > 0;
       await Future.any([
-        Future<void>.delayed(const Duration(seconds: 4)),
+        Future<void>.delayed(Duration(seconds: offerReview ? 10 : 4)),
         _skipGreeting.future,
       ]);
     }
-    if (mounted) Navigator.of(context).pop(result);
+    if (!mounted) return;
+    if (_reviewAsked) {
+      // The review takes this screen's place; whoever opened the ring
+      // screen still gets its result.
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => PracticeResultsScreen(
+            title: widget.alarm.label.isEmpty ? 'Alarm' : widget.alarm.label,
+            mode: 'revision',
+            results: List.of(_results),
+          ),
+        ),
+        result: result,
+      );
+      return;
+    }
+    Navigator.of(context).pop(result);
   }
 
   // Completed when the user taps the greeting to leave it early.
@@ -176,6 +195,13 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
 
   /// Set once the alarm was snoozed: when it rings again.
   DateTime? _snoozedUntil;
+
+  /// Every answer given while this alarm rang, for "Review missed
+  /// questions" on the alarm-off screen.
+  final List<PracticeResult> _results = [];
+  bool _reviewAsked = false;
+
+  int get _missedCount => _results.where((r) => !r.correct).length;
 
   Future<void> _submitAnswer(String answer) async {
     final q = _currentQuestion;
@@ -201,6 +227,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       ),
     );
     if (!mounted) return;
+    _results.add(PracticeResult(q, answer.trim(), isCorrect));
 
     if (isCorrect) {
       _correctStreak++;
@@ -498,11 +525,38 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             const SizedBox(height: 6),
             Text(
               snoozed
-                  ? 'Switch the alarm off on the Alarms tab to cancel it.'
+                  ? (Provider.of<AlarmProvider>(
+                          context,
+                          listen: false,
+                        ).canTurnOff(widget.alarm)
+                        ? 'You can now switch it off on the Alarms tab.'
+                        : AlarmProvider.snoozeLockMessage)
                   : '$_needed in a row. Well done.',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white54),
             ),
+            if (!snoozed && _missedCount > 0) ...[
+              const SizedBox(height: 22),
+              FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 52),
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                ),
+                onPressed: () {
+                  _reviewAsked = true;
+                  if (!_skipGreeting.isCompleted) _skipGreeting.complete();
+                },
+                icon: const Icon(Icons.fact_check_outlined),
+                label: Text(
+                  'Review ${plural(_missedCount, 'missed question')}',
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Tap anywhere else to close.',
+                style: TextStyle(color: Colors.white38, fontSize: 13),
+              ),
+            ],
           ],
         ),
       ),

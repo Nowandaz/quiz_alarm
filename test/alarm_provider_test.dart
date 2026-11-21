@@ -323,8 +323,8 @@ void main() {
     expect(provider.snoozedUntil(edited), until);
   });
 
-  test('switching a snoozed alarm on leaves the snooze; switching it off '
-      'cancels everything', () async {
+  test('a snoozed alarm cannot be switched off or deleted after one '
+      'snooze, only after two', () async {
     await resetApp();
     final backend = FakeBackend();
     final provider = AlarmProvider(backend: backend);
@@ -334,12 +334,27 @@ void main() {
     await ring(backend, a, today);
     await provider.snoozeAlarm(a);
 
-    await provider.setEnabled(a, true);
+    // Switching on never hurts the snooze.
+    expect(await provider.setEnabled(a, true), isTrue);
     expect(backend.registered[slot(22, 8)], isNotNull);
 
-    await provider.setEnabled(a, false);
+    // One snooze: the switch and delete are refused, nothing changes.
+    expect(provider.lockedBySnooze(a), isTrue);
+    expect(await provider.setEnabled(a, false), isFalse);
+    expect(a.isEnabled, isTrue);
+    expect(backend.registered[slot(22, 8)], isNotNull);
+    expect(await provider.deleteAlarms([22]), 1);
+    expect(provider.alarms.single.id, 22);
+    expect(backend.registered[slot(22, 8)], isNotNull);
+
+    // The snooze rings and is snoozed again: now it may be switched off.
+    await ring(backend, a, 8);
+    await provider.snoozeAlarm(a);
+    expect(provider.lockedBySnooze(a), isFalse);
+    expect(await provider.setEnabled(a, false), isTrue);
     expect(backend.registered.keys.where((id) => id ~/ 10 == 22), isEmpty);
     expect(provider.snoozedUntil(a), isNull);
+    expect(provider.snoozeCount(22), 0);
   });
 
   test('alarms are kept in order of time of day, on or off', () async {
@@ -501,6 +516,39 @@ void main() {
     expect(provider.alarms.single.isEnabled, isFalse);
     expect(provider.alarms.single.time.hour, 9);
     expect(backend.registered.keys.where((id) => id ~/ 10 == 36), isEmpty);
+  });
+
+  test('after two snoozes the alarm may be turned off without the quiz; '
+      'the count starts again with the next ring', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(41);
+    await provider.addAlarm(a);
+
+    await ring(backend, a, today);
+    expect(provider.canTurnOff(a), isFalse);
+    await provider.snoozeAlarm(a);
+    await ring(backend, a, 8); // the snooze comes back
+    expect(provider.canTurnOff(a), isFalse, reason: 'one snooze is not enough');
+    await provider.snoozeAlarm(a);
+    await ring(backend, a, 8);
+    expect(provider.canTurnOff(a), isTrue);
+
+    // It survives the app being closed between snooze and ring.
+    final reopened = AlarmProvider(
+      backend: FakeBackend()..registered.addAll(backend.registered),
+    );
+    await reopened.loaded;
+    expect(reopened.canTurnOff(reopened.alarms.single), isTrue);
+
+    await provider.dismissAlarm(a);
+    expect(provider.canTurnOff(a), isFalse);
+    await provider.snoozeAlarm(a);
+    await provider.snoozeAlarm(a);
+    await ring(backend, a, today); // tomorrow's ordinary ring
+    expect(provider.canTurnOff(a), isFalse);
   });
 
   test('a ring that never came is noticed and put in the diary', () async {

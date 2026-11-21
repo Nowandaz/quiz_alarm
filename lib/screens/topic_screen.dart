@@ -9,11 +9,13 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/bank_provider.dart';
 import '../services/ai_client.dart';
+import '../services/billing.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
 import 'practice_setup.dart';
+import 'upgrade_screen.dart';
 
 class TopicScreen extends StatefulWidget {
   final Topic topic;
@@ -56,6 +58,15 @@ class _TopicScreenState extends State<TopicScreen> {
         title: Text(title),
         content: SingleChildScrollView(child: Text(body)),
         actions: [
+          // Out of AI for today on the free plan: premium has more.
+          if (AiClient.isDailyLimit(body) && Billing.last?.premium != true)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                showUpgrade(context);
+              },
+              child: const Text('Upgrade'),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('OK'),

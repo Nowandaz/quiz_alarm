@@ -201,8 +201,14 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       ),
     );
     if (ok != true || !mounted) return;
-    provider.deleteAlarm(widget.existingAlarm!.id);
+    final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context);
+    // A snoozed alarm cannot be deleted to get round the quiz.
+    if (await provider.deleteAlarm(widget.existingAlarm!.id) > 0) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text(AlarmProvider.snoozeLockMessage)),
+      );
+    }
   }
 
   Future<void> _pickTopics() async {
@@ -484,7 +490,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                   'The snooze button unlocks after '
                   '${AlarmItem.wrongAnswersForSnooze} wrong answers in a '
                   'row. One right answer resets that count. A wrong answer '
-                  'also resets your streak of correct answers.',
+                  'also resets your streak of correct answers. A snoozed '
+                  'alarm can be switched off on the Alarms tab only after '
+                  'two snoozes.',
                   style: Theme.of(sheetContext).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),

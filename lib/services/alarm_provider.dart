@@ -223,6 +223,8 @@ class AlarmProvider extends ChangeNotifier {
     final isTest = known != null && ring.id == _slotId(known, _testSlot);
     if (!isTest) {
       final isSnooze = known != null && ring.id == _slotId(known, _snoozeSlot);
+      // A fresh ring (not a snooze coming back) starts the count again.
+      if (!isSnooze) await _setSnoozeCount(matched.id, 0);
       final due = isSnooze ? null : await _takeExpected(matched.id);
       unawaited(
         AlarmLog.add(
@@ -361,6 +363,45 @@ class AlarmProvider extends ChangeNotifier {
       if (await backend.isRinging(_slotId(alarm, s))) return true;
     }
     return false;
+  }
+
+  // ------------------------------------------------------------------
+  // How often the current ring of an alarm has been snoozed. A snoozed
+  // alarm cannot simply be switched off (or deleted) on the Alarms tab:
+  // that would be a way round the quiz after a single snooze. Only after
+  // [snoozesBeforeTurnOff] snoozes may it be switched off there. Kept in
+  // preferences, because the app is often closed between a snooze and
+  // its ring.
+  // ------------------------------------------------------------------
+  static const int snoozesBeforeTurnOff = 2;
+  static const String _snoozeCountPref = 'alarm_snooze_counts';
+  Map<String, dynamic> _snoozeCounts = {};
+
+  int snoozeCount(int alarmId) => (_snoozeCounts['$alarmId'] as int?) ?? 0;
+
+  /// Shown when someone tries to switch off a snoozed alarm too early.
+  static const String snoozeLockMessage = 'Snooze once more to turn this off.';
+
+  /// True when [alarm] has been snoozed often enough to be switched off
+  /// without finishing the quiz.
+  bool canTurnOff(AlarmItem alarm) =>
+      snoozeCount(alarm.id) >= snoozesBeforeTurnOff;
+
+  /// True while [alarm] is snoozed and may not be switched off or deleted
+  /// yet.
+  bool lockedBySnooze(AlarmItem alarm) =>
+      snoozedUntil(alarm) != null && !canTurnOff(alarm);
+
+  Future<void> _setSnoozeCount(int alarmId, int count) async {
+    if (count <= 0) {
+      if (_snoozeCounts.remove('$alarmId') == null) return;
+    } else {
+      _snoozeCounts['$alarmId'] = count;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_snoozeCountPref, jsonEncode(_snoozeCounts));
+    } catch (_) {}
   }
 
   /// When a running snooze of [alarm] will ring, or null.
@@ -726,10 +767,18 @@ class AlarmProvider extends ChangeNotifier {
 
   /// The switch on an alarm's card. Switching off also cancels a running
   /// snooze: after this nothing of the alarm will ring.
-  Future<void> setEnabled(AlarmItem card, bool on) => _oneAtATime(() async {
+  ///
+  /// Returns false, changing nothing, when switching off is refused because
+  /// the alarm is snoozed and has not been snoozed twice yet (see
+  /// [lockedBySnooze]).
+  Future<bool> setEnabled(AlarmItem card, bool on) => _oneAtATime(() async {
     // The card may still hold the alarm as it was before an edit.
     final alarm = alarms.firstWhere((a) => a.id == card.id, orElse: () => card);
-    if (!alarms.contains(alarm)) return; // deleted meanwhile
+    if (!alarms.contains(alarm)) return true; // deleted meanwhile
+    if (!on && lockedBySnooze(alarm)) {
+      notifyListeners(); // puts the switch back
+      return false;
+    }
     alarm.isEnabled = on;
     alarm.skipUntil = null;
     notifyListeners();
@@ -742,9 +791,15 @@ class AlarmProvider extends ChangeNotifier {
     }
     await _arm(alarm);
     unawaited(
-      AlarmLog.add(on ? 'switched_on' : 'switched_off', alarmId: alarm.id),
+      AlarmLog.add(
+        on ? 'switched_on' : 'switched_off',
+        alarmId: alarm.id,
+        detail: {'snoozes': snoozeCount(alarm.id)},
+      ),
     );
+    if (!on) await _setSnoozeCount(alarm.id, 0);
     await saveAlarms();
+    return true;
   });
 
   /// Skips the next ring only (the heads-up notification's "Skip"): a
@@ -799,11 +854,18 @@ class AlarmProvider extends ChangeNotifier {
         return done;
       });
 
-  Future<void> deleteAlarm(int id) => deleteAlarms([id]);
+  Future<int> deleteAlarm(int id) => deleteAlarms([id]);
 
   /// Deletes several alarms at once (multi-select on the Alarms tab).
-  Future<void> deleteAlarms(Iterable<int> ids) => _oneAtATime(() async {
-    final wanted = ids.toSet();
+  /// A snoozed alarm that may not be switched off yet is not deleted
+  /// either; returns how many were kept for that reason.
+  Future<int> deleteAlarms(Iterable<int> ids) => _oneAtATime(() async {
+    final asked = ids.toSet();
+    final locked = {
+      for (final a in alarms)
+        if (asked.contains(a.id) && lockedBySnooze(a)) a.id,
+    };
+    final wanted = asked.difference(locked);
     final gone = alarms.where((a) => wanted.contains(a.id)).toList();
     alarms.removeWhere((a) => wanted.contains(a.id));
     notifyListeners(); // gone from the list at once
@@ -822,6 +884,7 @@ class AlarmProvider extends ChangeNotifier {
       unawaited(AlarmLog.add('deleted', alarmId: a.id));
     }
     await saveAlarms();
+    return locked.length;
   });
 
   /// Silences whatever of [alarm] is ringing. Returns the system ids that
@@ -850,7 +913,14 @@ class AlarmProvider extends ChangeNotifier {
     if (inList && ringing.every((id) => id == _slotId(alarm, _testSlot))) {
       return; // a simulator test ring: the real schedule was never touched
     }
-    unawaited(AlarmLog.add('dismissed', alarmId: alarm.id));
+    unawaited(
+      AlarmLog.add(
+        'dismissed',
+        alarmId: alarm.id,
+        detail: {'snoozes': snoozeCount(alarm.id)},
+      ),
+    );
+    await _setSnoozeCount(alarm.id, 0);
     if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
       // Registers the weekday that just rang for next week; the other
       // days are already in place.
@@ -884,6 +954,7 @@ class AlarmProvider extends ChangeNotifier {
       await _arm(alarm, onlyMissing: true); // next week's ring of this day
     }
     final until = DateTime.now().add(Duration(minutes: alarm.snoozeMinutes));
+    await _setSnoozeCount(alarm.id, snoozeCount(alarm.id) + 1);
     unawaited(
       AlarmLog.add(
         'snoozed',
@@ -939,6 +1010,13 @@ class AlarmProvider extends ChangeNotifier {
         debugPrint('Saved alarms unreadable: $err');
       }
       alarms = loadedAlarms;
+      try {
+        _snoozeCounts = (jsonDecode(
+          prefs.getString(_snoozeCountPref) ?? '{}',
+        ) as Map).cast<String, dynamic>();
+      } catch (_) {
+        _snoozeCounts = {};
+      }
       _sort();
       await _findMissed();
 
