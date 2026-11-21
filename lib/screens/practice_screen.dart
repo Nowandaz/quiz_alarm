@@ -17,6 +17,7 @@ import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
+import 'practice_results.dart';
 
 /// Where a practice session takes its questions from.
 enum PracticeSource { bank, ai, both }
@@ -39,6 +40,10 @@ class PracticeScreen extends StatefulWidget {
   /// Saved questions, questions the AI writes now, or half of each.
   final PracticeSource source;
 
+  /// Exactly these questions, in this order, instead of drawing from the
+  /// bank (used to practise the ones just got wrong).
+  final List<Question>? questions;
+
   const PracticeScreen({
     super.key,
     required this.title,
@@ -47,6 +52,7 @@ class PracticeScreen extends StatefulWidget {
     this.mode = 'bank',
     this.limit,
     this.source = PracticeSource.bank,
+    this.questions,
   });
 
   @override
@@ -83,6 +89,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
   int _answered = 0;
   int _correct = 0;
 
+  /// Every question answered in this session, for the results screen.
+  final List<PracticeResult> _results = [];
+
+  bool get _preset => widget.questions != null;
+
   @override
   void initState() {
     super.initState();
@@ -95,12 +106,25 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   bool get _limitReached => _limit != null && _answered >= _limit!;
 
+  /// Number of the question on screen (1 = first). Once it is answered it
+  /// is already counted in [_answered].
+  int get _number {
+    final n = _phase == _Phase.answered ? _answered : _answered + 1;
+    return n.clamp(1, _limit ?? n);
+  }
+
   /// True when there is nothing more to ask after the current question.
   bool get _isLast =>
       _limitReached ||
+      (_preset && _fresh.isEmpty) ||
       (widget.source == PracticeSource.ai && !_useBank && _fresh.isEmpty);
 
   Future<void> _start() async {
+    if (_preset) {
+      _fresh.addAll(widget.questions!);
+      _limit = _fresh.length;
+      return _next();
+    }
     if (widget.source == PracticeSource.bank) return _next();
     // Ask the AI for new questions first; this can take up to a minute.
     setState(() => _phase = _Phase.preparing);
@@ -140,6 +164,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _answerCtrl.clear();
     final q = _fresh.isNotEmpty
         ? _fresh.removeAt(0).shuffled()
+        : _preset
+        ? null
         : await QuestionService.nextQuestion(
             widget.selectors,
             exclude: _shown,
@@ -202,6 +228,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _phase = _Phase.answered;
       _answered++;
       if (verdict) _correct++;
+      _results.add(PracticeResult(q, answer.trim(), verdict));
     });
     _session ??= QuestionRepository.startSession(widget.mode, widget.title);
     _sessionId = await _session;
@@ -252,24 +279,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
       Navigator.pop(context);
       return;
     }
-    final percent = (_correct * 100 / _answered).round();
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Session finished'),
-        content: Text(
-          'You answered $_answered question${_answered == 1 ? '' : 's'} and '
-          'got $_correct right ($percent%).',
+    // The results screen takes this screen's place, so "back" from it
+    // returns to where the practice was started.
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => PracticeResultsScreen(
+          title: widget.title,
+          mode: widget.mode,
+          aiTutor: widget.aiTutor,
+          results: List.of(_results),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
-          ),
-        ],
       ),
     );
-    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -282,9 +304,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
             child: Padding(
               padding: const EdgeInsets.only(right: 4),
               child: Text(
+                // The question on screen, not how many are answered: the
+                // first one reads "Question 1 of 5".
                 _limit == null
                     ? '$_correct / $_answered'
-                    : '$_answered / $_limit',
+                    : 'Question $_number of $_limit',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
             ),
@@ -308,7 +332,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
             padding: EdgeInsets.all(32),
             child: Text(
               'There are no questions for this selection yet.\n\n'
-              'Open the topic in Question Banks and tap "Generate with AI", '
+              'Open the topic in Question Banks and tap "Generate 5 with AI", '
               'or pick other topics.',
               textAlign: TextAlign.center,
             ),
@@ -657,8 +681,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
           )
         else if (!hasExplanation)
           Text(
-            'No explanation is saved for this question. Sign in from Settings '
-            'to get one from the AI tutor.',
+            'No explanation is saved for this question. $signInForAi',
             style: Theme.of(context).textTheme.bodySmall,
           ),
       ],

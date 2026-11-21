@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/account.dart';
 import '../services/system_bridge.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/brand.dart';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -36,12 +37,14 @@ class _AccountScreenState extends State<AccountScreen> {
     Account.instance.addListener(_onAccount);
     Account.instance.oauthError.value = null;
     Account.instance.oauthError.addListener(_onGoogleResult);
+    Account.instance.recovering.addListener(_onRecovering);
   }
 
   @override
   void dispose() {
     Account.instance.removeListener(_onAccount);
     Account.instance.oauthError.removeListener(_onGoogleResult);
+    Account.instance.recovering.removeListener(_onRecovering);
     _email.dispose();
     _password.dispose();
     _passwordFocus.dispose();
@@ -50,7 +53,16 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// Signed in (by either route): this screen is done.
   void _onAccount() {
-    if (Account.instance.isSignedIn && mounted) Navigator.pop(context);
+    if (!Account.instance.isSignedIn || !mounted) return;
+    // Remove THIS screen. A plain pop would close whatever is on top of
+    // it, which could be the quiz of an alarm that started ringing.
+    final route = ModalRoute.of(context);
+    if (route == null) return;
+    if (route.isCurrent) {
+      Navigator.pop(context);
+    } else {
+      Navigator.removeRoute(context, route);
+    }
   }
 
   void _onGoogleResult() {
@@ -82,7 +94,71 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// The emailed "set a new password" link was opened: this screen now
+  /// asks for the new password only.
+  bool get _recovering => Account.instance.recovering.value;
+
+  void _onRecovering() {
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _creating = false;
+      _error = null;
+      _notice = null;
+      _password.clear();
+    });
+  }
+
+  Future<void> _saveNewPassword() async {
+    if (_password.text.length < 6) {
+      setState(() => _error = 'The password needs at least 6 characters.');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final error = await Account.instance.setNewPassword(_password.text);
+    // On success _onAccount has already closed this screen.
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error;
+    });
+  }
+
+  /// "Forgot password?": emails a link for setting a new one.
+  Future<void> _forgotPassword() async {
+    final email = _email.text.trim();
+    if (!email.contains('@') || email.length < 5) {
+      setState(() {
+        _error = 'Enter your email address first.';
+        _notice = null;
+      });
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    final error = await Account.instance.resetPassword(email);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error;
+      if (error == null) {
+        _notice =
+            'We emailed you a link. Open it on this phone: it brings you '
+            'back here to choose a new password.';
+      }
+    });
+  }
+
   Future<void> _submit() async {
+    if (_recovering) return _saveNewPassword();
     final email = _email.text.trim();
     final password = _password.text;
     if (!email.contains('@') || email.length < 5) {
@@ -117,8 +193,8 @@ class _AccountScreenState extends State<AccountScreen> {
       if (needsConfirmation) {
         _creating = false;
         _notice =
-            'Account created. Open the link we emailed to $email, then come '
-            'back here and sign in.';
+            'Account created. Open the link we emailed to $email on this '
+            'phone and you are in.';
       }
     });
   }
@@ -133,219 +209,273 @@ class _AccountScreenState extends State<AccountScreen> {
       canPop: false, // an account is required
       child: Scaffold(
         body: AppBackground(
-          child: SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Brand
-                      Row(
+          child: Stack(
+            children: [
+              const Positioned.fill(child: BrandDial()),
+              SafeArea(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(22, 28, 22, 28),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 440),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Container(
-                            width: 54,
-                            height: 54,
-                            decoration: BoxDecoration(
-                              color: scheme.primary,
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: Icon(
-                              Icons.alarm_rounded,
-                              color: scheme.onPrimary,
-                              size: 30,
+                          // Brand
+                          Row(
+                            children: [
+                              const BrandMark(size: 60),
+                              const SizedBox(width: 14),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'BrainWake',
+                                    style: theme.textTheme.headlineSmall
+                                        ?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: -0.5,
+                                          height: 1.1,
+                                        ),
+                                  ),
+                                  Text(
+                                    'THE QUIZ ALARM',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.primary,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 2.4,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 36),
+                          Text(
+                            _recovering
+                                ? 'New\npassword.'
+                                : _creating
+                                ? 'Wake up\nsmarter.'
+                                : 'Welcome\nback.',
+                            style: theme.textTheme.displaySmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              height: 1.05,
+                              letterSpacing: -1,
                             ),
                           ),
-                          const SizedBox(width: 14),
+                          const SizedBox(height: 10),
                           Text(
-                            'BrainWake',
-                            style: theme.textTheme.headlineSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.5,
+                            _recovering
+                                ? 'Choose a new password for your account. '
+                                      'You will be signed in straight away.'
+                                : _creating
+                                ? 'The alarm that only stops when you answer '
+                                      'revision questions. Create your account '
+                                      'to begin.'
+                                : 'Sign in to pick up your alarms, progress and '
+                                      'questions where you left them.',
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: muted,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              Pill(
+                                'Answer to dismiss',
+                                icon: Icons.quiz_rounded,
+                              ),
+                              Pill(
+                                'AI tutor',
+                                icon: Icons.auto_awesome_rounded,
+                              ),
+                              Pill(
+                                'Track progress',
+                                icon: Icons.insights_rounded,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 22),
+
+                          GlossCard(
+                            padding: const EdgeInsets.all(18),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (!_recovering) ...[
+                                  _ModeSwitch(
+                                    creating: _creating,
+                                    onChanged: _setMode,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextField(
+                                    controller: _email,
+                                    keyboardType: TextInputType.emailAddress,
+                                    autocorrect: false,
+                                    autofillHints: const [AutofillHints.email],
+                                    textInputAction: TextInputAction.next,
+                                    onSubmitted: (_) =>
+                                        _passwordFocus.requestFocus(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Email',
+                                      prefixIcon: Icon(
+                                        Icons.mail_outline_rounded,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
+                                TextField(
+                                  controller: _password,
+                                  focusNode: _passwordFocus,
+                                  obscureText: !_showPassword,
+                                  autofillHints: [
+                                    _creating
+                                        ? AutofillHints.newPassword
+                                        : AutofillHints.password,
+                                  ],
+                                  onSubmitted: (_) => _busy ? null : _submit(),
+                                  decoration: InputDecoration(
+                                    labelText: _recovering
+                                        ? 'New password'
+                                        : 'Password',
+                                    helperText: _creating || _recovering
+                                        ? 'At least 6 characters.'
+                                        : null,
+                                    prefixIcon: const Icon(
+                                      Icons.lock_outline_rounded,
+                                    ),
+                                    suffixIcon: IconButton(
+                                      tooltip: _showPassword
+                                          ? 'Hide password'
+                                          : 'Show password',
+                                      icon: Icon(
+                                        _showPassword
+                                            ? Icons.visibility_off_rounded
+                                            : Icons.visibility_rounded,
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _showPassword = !_showPassword,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                if (!_creating && !_recovering)
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: TextButton(
+                                      onPressed: _busy ? null : _forgotPassword,
+                                      child: const Text('Forgot password?'),
+                                    ),
+                                  ),
+                                if (_error != null) ...[
+                                  const SizedBox(height: 12),
+                                  _Message(_error!, color: scheme.error),
+                                ],
+                                if (_notice != null) ...[
+                                  const SizedBox(height: 12),
+                                  _Message(_notice!, color: scheme.primary),
+                                ],
+                                const SizedBox(height: 16),
+                                PrimaryButton(
+                                  onPressed: _busy ? null : _submit,
+                                  icon: _busy
+                                      ? null
+                                      : Icons.arrow_forward_rounded,
+                                  label: _busy
+                                      ? 'Please wait...'
+                                      : _recovering
+                                      ? 'Save new password'
+                                      : _creating
+                                      ? 'Create account'
+                                      : 'Sign in',
+                                ),
+                                if (_recovering)
+                                  TextButton(
+                                    onPressed: _busy
+                                        ? null
+                                        : Account.instance.cancelRecovery,
+                                    child: const Text('Cancel'),
+                                  ),
+                              ],
+                            ),
+                          ),
+
+                          if (_googleAvailable && !_recovering) ...[
+                            const SizedBox(height: 18),
+                            Row(
+                              children: [
+                                const Expanded(child: Divider()),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  child: Text(
+                                    'or',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: muted,
+                                    ),
+                                  ),
+                                ),
+                                const Expanded(child: Divider()),
+                              ],
+                            ),
+                            const SizedBox(height: 18),
+                            SizedBox(
+                              height: 56,
+                              child: OutlinedButton(
+                                onPressed: _busy ? null : _google,
+                                style: OutlinedButton.styleFrom(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 34,
+                                      height: 34,
+                                      alignment: Alignment.center,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const GoogleLogo(size: 20),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      'Continue with Google',
+                                      style: theme.textTheme.titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 22),
+                          Text(
+                            'Your alarms keep ringing without internet. The '
+                            'account keeps your progress safe and brings new '
+                            'questions.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: muted,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 28),
-                      Text(
-                        _creating ? 'Wake up\nsmarter.' : 'Welcome\nback.',
-                        style: theme.textTheme.displaySmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          height: 1.05,
-                          letterSpacing: -1,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        _creating
-                            ? 'The alarm that only stops when you answer '
-                                  'revision questions. Create your account '
-                                  'to begin.'
-                            : 'Sign in to pick up your alarms, progress and '
-                                  'questions where you left them.',
-                        style: theme.textTheme.bodyLarge?.copyWith(
-                          color: muted,
-                          height: 1.4,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      GlossCard(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _ModeSwitch(
-                              creating: _creating,
-                              onChanged: _setMode,
-                            ),
-                            const SizedBox(height: 16),
-                            TextField(
-                              controller: _email,
-                              keyboardType: TextInputType.emailAddress,
-                              autocorrect: false,
-                              autofillHints: const [AutofillHints.email],
-                              textInputAction: TextInputAction.next,
-                              onSubmitted: (_) => _passwordFocus.requestFocus(),
-                              decoration: const InputDecoration(
-                                labelText: 'Email',
-                                prefixIcon: Icon(Icons.mail_outline_rounded),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: _password,
-                              focusNode: _passwordFocus,
-                              obscureText: !_showPassword,
-                              autofillHints: [
-                                _creating
-                                    ? AutofillHints.newPassword
-                                    : AutofillHints.password,
-                              ],
-                              onSubmitted: (_) => _busy ? null : _submit(),
-                              decoration: InputDecoration(
-                                labelText: 'Password',
-                                helperText: _creating
-                                    ? 'At least 6 characters.'
-                                    : null,
-                                prefixIcon: const Icon(
-                                  Icons.lock_outline_rounded,
-                                ),
-                                suffixIcon: IconButton(
-                                  tooltip: _showPassword
-                                      ? 'Hide password'
-                                      : 'Show password',
-                                  icon: Icon(
-                                    _showPassword
-                                        ? Icons.visibility_off_rounded
-                                        : Icons.visibility_rounded,
-                                  ),
-                                  onPressed: () => setState(
-                                    () => _showPassword = !_showPassword,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (_error != null) ...[
-                              const SizedBox(height: 12),
-                              _Message(_error!, color: scheme.error),
-                            ],
-                            if (_notice != null) ...[
-                              const SizedBox(height: 12),
-                              _Message(_notice!, color: scheme.primary),
-                            ],
-                            const SizedBox(height: 16),
-                            PrimaryButton(
-                              onPressed: _busy ? null : _submit,
-                              icon: _busy ? null : Icons.arrow_forward_rounded,
-                              label: _busy
-                                  ? 'Please wait...'
-                                  : _creating
-                                  ? 'Create account'
-                                  : 'Sign in',
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      if (_googleAvailable) ...[
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            const Expanded(child: Divider()),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Text(
-                                'or',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: muted,
-                                ),
-                              ),
-                            ),
-                            const Expanded(child: Divider()),
-                          ],
-                        ),
-                        const SizedBox(height: 18),
-                        SizedBox(
-                          height: 56,
-                          child: OutlinedButton(
-                            onPressed: _busy ? null : _google,
-                            style: OutlinedButton.styleFrom(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Container(
-                                  width: 26,
-                                  height: 26,
-                                  alignment: Alignment.center,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Text(
-                                    'G',
-                                    style: TextStyle(
-                                      color: Color(0xFF4285F4),
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 15,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'Continue with Google',
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 22),
-                      Text(
-                        'Your alarms keep ringing without internet. The '
-                        'account keeps your progress safe and brings new '
-                        'questions.',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: muted,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

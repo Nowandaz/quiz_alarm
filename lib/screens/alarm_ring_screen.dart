@@ -39,7 +39,7 @@ enum _Phase { loading, asking, grading, correct, wrong, failed, done }
 
 class _AlarmRingScreenState extends State<AlarmRingScreen> {
   static const Color _baseColor = Colors.black;
-  static const int _wrongForSnooze = 5;
+  static const int _wrongForSnooze = AlarmItem.wrongAnswersForSnooze;
 
   int _correctStreak = 0;
   int _wrongStreak = 0;
@@ -143,15 +143,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       // Whatever goes wrong here, the screen must still close.
       try {
         if (result == 'snooze') {
-          await provider.snoozeAlarm(widget.alarm);
+          _snoozedUntil = await provider.snoozeAlarm(widget.alarm);
         } else {
           await provider.dismissAlarm(widget.alarm);
         }
       } catch (e) {
         debugPrint('Stopping the alarm failed: $e');
-        try {
-          await provider.backend.stop(widget.alarm.id);
-        } catch (_) {}
+        await provider.forceStop(widget.alarm);
+        if (result == 'snooze') result = 'snooze_failed';
       }
       try {
         await QuestionRepository.endSession(
@@ -162,7 +161,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       QuestionService.changes.value++;
     }
     if (!mounted) return;
-    if (result == 'dismissed') {
+    if (result == 'dismissed' || _snoozedUntil != null) {
       setState(() => _phase = _Phase.done);
       await Future.any([
         Future<void>.delayed(const Duration(seconds: 4)),
@@ -174,6 +173,9 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
 
   // Completed when the user taps the greeting to leave it early.
   final Completer<void> _skipGreeting = Completer<void>();
+
+  /// Set once the alarm was snoozed: when it rings again.
+  DateTime? _snoozedUntil;
 
   Future<void> _submitAnswer(String answer) async {
     final q = _currentQuestion;
@@ -262,14 +264,15 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                           ),
                         ),
                       ),
-                      if (_wrongStreak >= _wrongForSnooze)
+                      // Filled, so it is easy to find half asleep. Gone once
+                      // the alarm is snoozed or off (the "done" view).
+                      if (_wrongStreak >= _wrongForSnooze &&
+                          _phase != _Phase.done)
                         Padding(
                           padding: const EdgeInsets.only(top: 8),
-                          child: OutlinedButton.icon(
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.white70,
-                              side: const BorderSide(color: Colors.white70),
-                              minimumSize: const Size.fromHeight(48),
+                          child: FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              minimumSize: const Size.fromHeight(52),
                             ),
                             onPressed: () => _finish('snooze'),
                             icon: const Icon(Icons.snooze),
@@ -346,13 +349,6 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.close, size: 18),
                 label: const Text('Close test'),
-              )
-            else
-              Text(
-                'Wrong: $_wrongStreak / $_wrongForSnooze',
-                style: TextStyle(
-                  color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
-                ),
               ),
           ],
         ),
@@ -366,17 +362,21 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             backgroundColor: Colors.white12,
           ),
         ),
-        if (widget.preview)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(
-              'Wrong: $_wrongStreak / $_wrongForSnooze',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
-              ),
+        // Says what the wrong answers are counted for.
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            _wrongStreak >= _wrongForSnooze
+                ? 'Snooze is unlocked'
+                : 'Snooze unlocks after $_wrongForSnooze wrong in a row '
+                      '($_wrongStreak so far)',
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              color: _wrongStreak > 0 ? AppColors.danger : Colors.white54,
+              fontSize: 13,
             ),
           ),
+        ),
       ],
     );
   }
@@ -450,6 +450,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   Widget _doneView() {
     final now = DateTime.now();
     final use24 = context.read<ThemeProvider>().use24Hour;
+    final snoozed = _snoozedUntil != null;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -466,14 +467,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.check_circle_rounded,
-              color: AppColors.success,
+            Icon(
+              snoozed ? Icons.snooze_rounded : Icons.check_circle_rounded,
+              color: snoozed ? Colors.white : AppColors.success,
               size: 88,
             ),
             const SizedBox(height: 20),
             Text(
-              '${greetingFor(now.hour, waking: true)}!',
+              snoozed ? 'Snoozed' : '${greetingFor(now.hour, waking: true)}!',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontFamily: AppTheme.display,
@@ -484,7 +485,11 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              widget.preview
+              snoozed
+                  ? 'It rings again at '
+                        '${formatClock(_snoozedUntil!, use24Hour: use24)}, '
+                        'in ${widget.alarm.snoozeMinutes} minutes.'
+                  : widget.preview
                   ? 'Test finished. Nicely done.'
                   : 'Alarm off. It is ${formatClock(now, use24Hour: use24)}.',
               textAlign: TextAlign.center,
@@ -492,7 +497,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              '$_needed in a row. Well done.',
+              snoozed
+                  ? 'Switch the alarm off on the Alarms tab to cancel it.'
+                  : '$_needed in a row. Well done.',
+              textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white54),
             ),
           ],
@@ -575,6 +583,11 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          // The picture the question was about, so the review makes sense.
+          if (q.image.isNotEmpty) ...[
+            QuestionImage(q.image, maxHeight: 160),
+            const SizedBox(height: 12),
+          ],
           Text(
             q.questionText,
             style: const TextStyle(color: Colors.white70, fontSize: 15),

@@ -9,10 +9,10 @@ import 'screens/home_screen.dart';
 import 'services/account.dart';
 import 'services/alarm_backend.dart';
 import 'services/alarm_provider.dart';
+import 'data/alarm_log.dart';
 import 'data/question_repository.dart';
 import 'services/bank_provider.dart';
 import 'services/sync_service.dart';
-import 'services/system_bridge.dart';
 import 'services/theme_provider.dart';
 import 'theme/app_theme.dart';
 
@@ -34,12 +34,7 @@ Future<void> main() async {
   Account.instance.addListener(
     () => SyncService.schedule(const Duration(seconds: 1)),
   );
-  // The browser hands Google sign-ins back as a link.
-  SystemBridge.listenForAuthLinks((link) async {
-    Account.instance.oauthError.value = await Account.instance.completeOAuth(
-      Uri.parse(link),
-    );
-  });
+  AlarmLog.onUrgent = () => SyncService.schedule(const Duration(seconds: 2));
   SyncService.loadStatus();
   SyncService.schedule(const Duration(seconds: 3));
 

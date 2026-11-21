@@ -90,3 +90,5 @@ x86/
 
 # This project
 repomix-output.xml
+# The browser emulator keeps its own data here between runs.
+tool/emulator/.profile/

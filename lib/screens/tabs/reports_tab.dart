@@ -1,6 +1,7 @@
-/// Reports tab: how you are doing over time, which topics are weak, how
-/// long alarms take to dismiss, and the history of every alarm and
-/// practice session (tap one to see its questions and explanations).
+/// Reports tab: how you are doing over time (trends against the weeks
+/// before), which topics are weak (tap one to practise it), how long
+/// alarms take to dismiss, and the history of every alarm and practice
+/// session (tap one to see its questions and explanations).
 library;
 
 import 'package:intl/intl.dart';
@@ -11,8 +12,10 @@ import '../../data/question_repository.dart';
 import '../../models/models.dart';
 import '../../services/question_service.dart';
 import '../../services/theme_provider.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/coach_tour.dart';
+import '../practice_setup.dart';
 import '../session_screen.dart';
 
 /// "1m 20s", "45s" or "2h 5m".
@@ -130,6 +133,11 @@ class _ReportsTabState extends State<ReportsTab> {
               ],
             ),
           ),
+          // Hidden until there is something to compare.
+          if (report.answered > 0) ...[
+            const SizedBox(height: 12),
+            _TrendsCard(trends: report.trends),
+          ],
           const SizedBox(height: 12),
           Row(
             children: [
@@ -182,14 +190,22 @@ class _ReportsTabState extends State<ReportsTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text('By topic', style: theme.textTheme.titleMedium),
-                  Text('Weakest first.', style: theme.textTheme.bodySmall),
+                  Text(
+                    report.topics.isEmpty
+                        ? 'Weakest first.'
+                        : 'Weakest first. Tap a topic to practise it.',
+                    style: theme.textTheme.bodySmall,
+                  ),
                   const SizedBox(height: 8),
                   if (report.topics.isEmpty)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 8),
                       child: Text('Nothing answered yet.'),
                     ),
-                  for (final t in report.topics) _TopicRow(topic: t),
+                  for (final (i, t) in report.topics.indexed)
+                    // The weakest topic carries the "Practise" label; the
+                    // chevrons say the rest work the same way.
+                    _TopicRow(topic: t, weakest: i == 0),
                 ],
               ),
             ),
@@ -373,35 +389,289 @@ class _DayChart extends StatelessWidget {
   }
 }
 
+/// Opens the practice set-up with one topic ticked.
+void _practise(BuildContext context, String topicId, String name) =>
+    showPracticeSetup(context, initialTopics: {topicId}, title: name);
+
+/// "Practise" and a chevron: marks a row as something to tap.
+class _PractiseHint extends StatelessWidget {
+  final bool label;
+  const _PractiseHint({this.label = true});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (label)
+          Text(
+            'Practise',
+            style: TextStyle(
+              color: scheme.primary,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+          ),
+        Icon(
+          Icons.chevron_right_rounded,
+          size: 20,
+          color: scheme.onSurfaceVariant,
+        ),
+      ],
+    );
+  }
+}
+
+/// All-time accuracy on one topic. Tapping it opens practice for it.
 class _TopicRow extends StatelessWidget {
   final TopicAccuracy topic;
-  const _TopicRow({required this.topic});
+  final bool weakest;
+  const _TopicRow({required this.topic, this.weakest = false});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(child: Text(topic.topic)),
-              Text(
-                '${(topic.accuracy * 100).round()}%  '
-                '(${topic.correct}/${topic.answered})',
-                style: theme.textTheme.bodySmall,
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _practise(context, topic.id, topic.topic),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text(topic.topic)),
+                Text(
+                  '${(topic.accuracy * 100).round()}%  '
+                  '(${topic.correct}/${topic.answered})',
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(width: 6),
+                _PractiseHint(label: weakest),
+              ],
+            ),
+            const SizedBox(height: 4),
+            LinearProgressIndicator(
+              value: topic.accuracy,
+              minHeight: 6,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// How the last 14 days compare with the 14 before, this week with last
+/// week, and which topics moved. A row with nothing to say is left out.
+class _TrendsCard extends StatelessWidget {
+  final ReportTrends trends;
+  const _TrendsCard({required this.trends});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final t = trends;
+    final accuracy = t.accuracy;
+    final small = theme.textTheme.bodySmall;
+
+    Widget heading(String text) => Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 2),
+      child: Text(text, style: theme.textTheme.titleSmall),
+    );
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Trends', style: theme.textTheme.titleMedium),
+            if (t.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Nothing answered in the last four weeks. Practise a few '
+                  'questions and your trends show up here.',
+                  style: small,
+                ),
+              ),
+            if (accuracy != null) ...[
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    '$accuracy%',
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Accuracy, last 14 days',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(_sentence(t.comparison!), style: small),
+                      ],
+                    ),
+                  ),
+                  if (t.previousAnswered > 0)
+                    Icon(
+                      t.comparison!.startsWith('up')
+                          ? Icons.trending_up_rounded
+                          : t.comparison!.startsWith('down')
+                          ? Icons.trending_down_rounded
+                          : Icons.trending_flat_rounded,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                ],
               ),
             ],
+            if (t.thisWeek > 0 || t.lastWeek > 0) ...[
+              const Divider(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: _WeekCount(label: 'This week', count: t.thisWeek),
+                  ),
+                  Expanded(
+                    child: _WeekCount(label: 'Last week', count: t.lastWeek),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  for (var i = 0; i < 7; i++)
+                    _DayDot(letter: 'MTWTFSS'[i], practised: t.weekDays[i]),
+                ],
+              ),
+              const SizedBox(height: 6),
+              // Under the dots, not beside them: a narrow phone has no
+              // room for both on one line.
+              Text(
+                'You practised on ${t.daysPractised} of 7 days this week.',
+                style: small,
+              ),
+            ],
+            if (t.improving.isNotEmpty) ...[
+              heading('Improving most'),
+              for (final topic in t.improving)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(
+                    children: [
+                      Expanded(child: Text(topic.topic)),
+                      Text(
+                        '${(topic.previousAccuracy * 100).round()}% to '
+                        '${(topic.accuracy * 100).round()}%',
+                        style: small,
+                      ),
+                      const SizedBox(width: 8),
+                      Pill(
+                        'Up ${topic.change}',
+                        icon: Icons.trending_up_rounded,
+                        color: AppColors.success,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            if (t.needsRevision.isNotEmpty) ...[
+              heading('Needs revision'),
+              for (final topic in t.needsRevision)
+                InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _practise(context, topic.id, topic.topic),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 7),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text(topic.topic)),
+                        Text(
+                          '${(topic.accuracy * 100).round()}%  '
+                          '(${topic.correct}/${topic.answered})',
+                          style: small,
+                        ),
+                        const SizedBox(width: 6),
+                        const _PractiseHint(),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// "up 8 points..." with a capital and a full stop.
+  static String _sentence(String text) =>
+      '${text[0].toUpperCase()}${text.substring(1)}.';
+}
+
+/// "This week" over a count of questions.
+class _WeekCount extends StatelessWidget {
+  final String label;
+  final int count;
+  const _WeekCount({required this.label, required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: theme.textTheme.bodySmall),
+        Text(
+          plural(count, 'question'),
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
           ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: topic.accuracy,
-            minHeight: 6,
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ],
+        ),
+      ],
+    );
+  }
+}
+
+/// One day of the week: filled when something was answered that day.
+class _DayDot extends StatelessWidget {
+  final String letter;
+  final bool practised;
+  const _DayDot({required this.letter, required this.practised});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 24,
+      height: 24,
+      margin: const EdgeInsets.only(right: 5),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: practised ? scheme.primary : Colors.transparent,
+        border: Border.all(
+          color: practised ? scheme.primary : scheme.outlineVariant,
+        ),
+      ),
+      child: Text(
+        letter,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: practised ? scheme.onPrimary : scheme.onSurfaceVariant,
+        ),
       ),
     );
   }
@@ -449,7 +719,7 @@ class _SessionCard extends StatelessWidget {
         subtitle: Text(
           '${DateFormat('EEE d MMM').format(s.startedAt)}, '
           '${formatClock(s.startedAt, use24Hour: context.watch<ThemeProvider>().use24Hour)}\n'
-          '${parts.join(' - ')}',
+          '${parts.join(' \u00b7 ')}',
           style: theme.textTheme.bodySmall,
         ),
         isThreeLine: true,

@@ -58,7 +58,7 @@ class _SessionScreenState extends State<SessionScreen> {
               ),
               children: [
                 Text(
-                  '$kind - ${DateFormat('EEEE d MMMM').format(s.startedAt)}, '
+                  '$kind \u00b7 ${DateFormat('EEEE d MMMM').format(s.startedAt)}, '
                   '${formatClock(s.startedAt, use24Hour: context.watch<ThemeProvider>().use24Hour)}',
                   style: theme.textTheme.bodyMedium,
                 ),
@@ -97,7 +97,12 @@ class _SessionScreenState extends State<SessionScreen> {
                       ),
                       if (s.duration != null)
                         _line(
-                          s.kind == 'alarm' ? 'Time to wake' : 'Time spent',
+                          // A snoozed alarm did not wake anyone yet.
+                          s.kind != 'alarm'
+                              ? 'Time spent'
+                              : s.outcome == 'snoozed'
+                              ? 'Time to snooze'
+                              : 'Time to wake',
                           formatDuration(s.duration!),
                         ),
                     ],

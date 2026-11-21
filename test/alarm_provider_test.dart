@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:quiz_alarm/data/alarm_log.dart';
 import 'package:quiz_alarm/models/models.dart';
 import 'package:quiz_alarm/services/alarm_backend.dart';
 import 'package:quiz_alarm/services/alarm_provider.dart';
@@ -41,6 +42,11 @@ class FakeBackend implements AlarmBackend {
 
   @override
   Future<bool> isRinging(int id) async => ringing.contains(id);
+
+  /// Due, but waiting behind another ringing alarm.
+  final Set<int> waiting = {};
+  @override
+  Future<bool> isWaiting(int id) async => waiting.contains(id);
   @override
   DateTime? scheduledTime(int id) => registered[id];
 }
@@ -98,8 +104,10 @@ void main() {
     final lost = today % 7 + 1; // tomorrow
     for (var d = 1; d <= 7; d++) {
       if (d != lost) {
-        backend.registered[slot(1, d)] = DateTime.now().add(
-          Duration(days: 1 + d),
+        backend.registered[slot(1, d)] = calculateNextTrigger(
+          const TimeOfDay(hour: 7, minute: 0),
+          [d],
+          DateTime.now(),
         );
       }
     }
@@ -162,7 +170,11 @@ void main() {
   test('a ring-once alarm that is still registered is left alone', () async {
     await resetApp(prefs: saved([alarm(1, days: const [])]));
     final backend = FakeBackend()
-      ..registered[slot(1, 0)] = DateTime.now().add(const Duration(hours: 2));
+      ..registered[slot(1, 0)] = calculateNextTrigger(
+        const TimeOfDay(hour: 7, minute: 0),
+        const [],
+        DateTime.now(),
+      );
     final provider = AlarmProvider(backend: backend);
     await provider.loaded;
 
@@ -221,6 +233,39 @@ void main() {
     expect(a.isEnabled, isTrue);
   });
 
+  test('a switched-off alarm leaves nothing registered after a dismissal '
+      'and is not the "next" alarm', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(4, days: const []);
+    await provider.addAlarm(a);
+    // Leftovers of the same alarm: a weekday from when it repeated, and a
+    // registration made by an older app version.
+    final later = DateTime.now().add(const Duration(days: 2));
+    backend.registered[slot(4, 3)] = later;
+    backend.registered[4] = later;
+
+    // The ring-once registration fires, which switches the alarm off.
+    backend.registered.remove(slot(4, 0));
+    backend.ringing.add(slot(4, 0));
+    backend.controller.add(AlarmRing(slot(4, 0), 'ring'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(a.isEnabled, isFalse);
+    expect(provider.nextRing(a), isNull); // leftovers do not count
+
+    await provider.dismissAlarm(a);
+    expect(backend.ringing, isEmpty);
+    expect(backend.registered, isEmpty);
+    expect(provider.nextRing(a), isNull);
+
+    // Off, but snoozed: the snooze is still its next ring.
+    final snoozeAt = DateTime.now().add(const Duration(minutes: 5));
+    backend.registered[slot(4, 8)] = snoozeAt;
+    expect(provider.nextRing(a), snoozeAt);
+  });
+
   test('snooze uses its own registration and the alarm length', () async {
     await resetApp();
     final backend = FakeBackend();
@@ -246,6 +291,262 @@ void main() {
     // what the Alarms tab reports as the next ring.
     expect(backend.registered[id], isNotNull);
     expect(provider.nextRing(a), snoozeAt);
+  });
+
+  // Rings alarm [a] through the given slot, as the phone would.
+  Future<void> ring(FakeBackend backend, AlarmItem a, int n) async {
+    final id = slot(a.id, n);
+    backend.registered.remove(id);
+    backend.ringing.add(id);
+    backend.controller.add(AlarmRing(id, 'ring'));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+
+  test('editing a snoozed ring-once alarm keeps the snooze (it used to be '
+      'cancelled, so the alarm never rang again)', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(21, days: const []);
+    await provider.addAlarm(a);
+    await ring(backend, a, 0);
+    expect(a.isEnabled, isFalse, reason: 'a ring-once alarm is used up');
+
+    final until = await provider.snoozeAlarm(a);
+    expect(provider.snoozedUntil(a), until);
+
+    // The user opens the alarm and changes its difficulty.
+    final edited = AlarmItem.fromJson(a.toJson())..requiredStreak = 5;
+    await provider.updateAlarm(edited);
+    expect(backend.registered[slot(21, 8)], until, reason: 'still snoozed');
+    expect(provider.snoozedUntil(edited), until);
+  });
+
+  test('switching a snoozed alarm on leaves the snooze; switching it off '
+      'cancels everything', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(22);
+    await provider.addAlarm(a);
+    await ring(backend, a, today);
+    await provider.snoozeAlarm(a);
+
+    await provider.setEnabled(a, true);
+    expect(backend.registered[slot(22, 8)], isNotNull);
+
+    await provider.setEnabled(a, false);
+    expect(backend.registered.keys.where((id) => id ~/ 10 == 22), isEmpty);
+    expect(provider.snoozedUntil(a), isNull);
+  });
+
+  test('alarms are kept in order of time of day, on or off', () async {
+    await resetApp();
+    final provider = AlarmProvider(backend: FakeBackend());
+    await provider.loaded;
+    AlarmItem at(int id, int hour, {bool on = true}) => AlarmItem(
+      id: id,
+      time: TimeOfDay(hour: hour, minute: 0),
+      topics: const [],
+      isEnabled: on,
+    );
+    await provider.addAlarm(at(1, 9));
+    await provider.addAlarm(at(2, 6));
+    await provider.addAlarm(at(3, 1, on: false));
+    expect(provider.alarms.map((a) => a.id), [3, 2, 1]);
+
+    // Moving an alarm's time moves it in the list.
+    await provider.updateAlarm(at(1, 4));
+    expect(provider.alarms.map((a) => a.id), [3, 1, 2]);
+  });
+
+  test(
+    'skipping the next ring of a repeating alarm misses one day only',
+    () async {
+      await resetApp();
+      final backend = FakeBackend();
+      final provider = AlarmProvider(backend: backend);
+      await provider.loaded;
+      final a = alarm(23);
+      await provider.addAlarm(a);
+      final first = provider.nextRing(a)!;
+
+      expect(await provider.skipNext(23), startsWith('Skipped'));
+      final second = provider.nextRing(a)!;
+      expect(second.isAfter(first), isTrue);
+      expect(second.difference(first).inHours, inInclusiveRange(23, 25));
+      expect(a.isEnabled, isTrue);
+      // The skipped weekday comes back the week after.
+      expect(
+        backend.registered[slot(23, first.weekday)]!.difference(first).inDays,
+        7,
+      );
+
+      // Skipping a ring-once alarm switches it off.
+      final once = alarm(24, days: const []);
+      await provider.addAlarm(once);
+      expect(await provider.skipNext(24), 'Alarm switched off.');
+      expect(once.isEnabled, isFalse);
+      expect(await provider.skipNext(999), isNull);
+    },
+  );
+
+  test('a late or stale tap on Skip never silences a ringing alarm or '
+      'skips the wrong day', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(31);
+    await provider.addAlarm(a);
+    final first = provider.nextRing(a)!;
+
+    // Tapped for a ring that is not the next one any more.
+    expect(
+      await provider.skipNext(
+        31,
+        ringAt: first.subtract(const Duration(days: 1)),
+      ),
+      isNull,
+    );
+    expect(provider.nextRing(a), first);
+
+    // Tapped after the alarm has started: nothing is touched.
+    await ring(backend, a, first.weekday);
+    final before = Map.of(backend.registered);
+    expect(await provider.skipNext(31, ringAt: first), isNull);
+    expect(backend.ringing, {slot(31, first.weekday)});
+    expect(backend.registered, before);
+
+    // The right tap at the right time works.
+    await provider.dismissAlarm(a);
+    final next = provider.nextRing(a)!;
+    expect(await provider.skipNext(31, ringAt: next), startsWith('Skipped'));
+  });
+
+  test('editing an alarm while it rings does not silence it', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(32);
+    await provider.addAlarm(a);
+    await ring(backend, a, today);
+    await provider.updateAlarm(
+      AlarmItem.fromJson(a.toJson())..label = 'New name',
+    );
+    expect(backend.ringing, {slot(32, today)});
+  });
+
+  test('an alarm waiting behind a ringing one survives the app being '
+      'opened', () async {
+    final a = alarm(33);
+    await resetApp(prefs: saved([a]));
+    final backend = FakeBackend()..waiting.add(slot(33, today));
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    expect(backend.setCalls, isNot(contains(slot(33, today))));
+    expect(backend.setCalls.length, 6, reason: 'the other six days are set');
+  });
+
+  test('a registration at the wrong moment is corrected when the app '
+      'starts (time zone change, half-failed edit)', () async {
+    final a = alarm(34);
+    await resetApp(prefs: saved([a]));
+    final backend = FakeBackend();
+    final wrong = DateTime.now().add(const Duration(days: 2, hours: 3));
+    backend.registered[slot(34, wrong.weekday)] = wrong;
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final fixed = backend.registered[slot(34, wrong.weekday)]!;
+    expect(fixed.hour, 7);
+    expect(fixed.minute, 0);
+  });
+
+  test('re-ticking a day in the editor keeps a skipped ring skipped', () async {
+    await resetApp();
+    final provider = AlarmProvider(backend: FakeBackend());
+    await provider.loaded;
+    final a = alarm(35, days: const [1, 2, 3, 4, 5, 6, 7]);
+    await provider.addAlarm(a);
+    await provider.skipNext(35);
+    final skipped = provider.nextRing(a)!;
+    // The editor hands the days back in a different order.
+    final edited = AlarmItem.fromJson(a.toJson())
+      ..activeDays = [1, 2, 4, 5, 6, 7, 3]
+      ..skipUntil = null
+      ..label = 'Renamed';
+    await provider.updateAlarm(edited);
+    expect(provider.nextRing(edited), skipped);
+    expect(provider.alarms.single.activeDays, [1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  test('a switch tapped on a card from before an edit acts on the '
+      'edited alarm', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final old = alarm(36);
+    await provider.addAlarm(old);
+    final edited = AlarmItem.fromJson(old.toJson())
+      ..time = const TimeOfDay(hour: 9, minute: 30);
+    // Both at once, as a quick tap after saving would do.
+    await Future.wait([
+      provider.updateAlarm(edited),
+      provider.setEnabled(old, false),
+    ]);
+    expect(provider.alarms.single.isEnabled, isFalse);
+    expect(provider.alarms.single.time.hour, 9);
+    expect(backend.registered.keys.where((id) => id ~/ 10 == 36), isEmpty);
+  });
+
+  test('a ring that never came is noticed and put in the diary', () async {
+    final a = alarm(25);
+    final due = DateTime.now().subtract(const Duration(hours: 2));
+    await resetApp(
+      prefs: {
+        ...saved([a]),
+        'alarm_expected': jsonEncode({'25': due.millisecondsSinceEpoch}),
+      },
+    );
+    final provider = AlarmProvider(backend: FakeBackend());
+    await provider.loaded;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(provider.missed.single.alarmId, 25);
+    expect(
+      provider.missed.single.scheduled.millisecondsSinceEpoch,
+      due.millisecondsSinceEpoch,
+    );
+    final events = await AlarmLog.recent(alarmId: 25);
+    expect(events.map((e) => e.type), contains('missed'));
+    // It is rescheduled, and asked about only once.
+    expect(provider.nextRing(a), isNotNull);
+    provider.missedHandled(provider.missed.single);
+    expect(provider.missed, isEmpty);
+  });
+
+  test('a ring that did happen is not reported as missed', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    var provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(26);
+    await provider.addAlarm(a);
+    await ring(backend, a, today);
+    await provider.dismissAlarm(a);
+    final types = (await AlarmLog.recent(alarmId: 26)).map((e) => e.type);
+    expect(types, containsAll(['created', 'scheduled', 'rang', 'dismissed']));
+
+    // The app is opened again (same phone, so the same registrations).
+    provider = AlarmProvider(
+      backend: FakeBackend()..registered.addAll(backend.registered),
+    );
+    await provider.loaded;
+    expect(provider.missed, isEmpty);
   });
 
   test('deleting several alarms removes all their registrations', () async {

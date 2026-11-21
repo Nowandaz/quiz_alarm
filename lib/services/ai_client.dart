@@ -107,6 +107,7 @@ class AiClient {
     String subject, {
     required int count,
     List<String> avoid = const [],
+    String objectives = '',
   }) async {
     final data = await _call(
       'POST',
@@ -114,6 +115,11 @@ class AiClient {
       body: {
         'subject': subject,
         'count': count.clamp(1, 10),
+        // What the user said the topic should cover, if anything.
+        if (objectives.trim().isNotEmpty)
+          'objectives': objectives.trim().length > 900
+              ? objectives.trim().substring(0, 900)
+              : objectives.trim(),
         'avoid': [
           for (final text in avoid.take(40))
             text.length > 1900 ? text.substring(0, 1900) : text,

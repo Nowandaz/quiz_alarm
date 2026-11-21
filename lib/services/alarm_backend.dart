@@ -62,6 +62,11 @@ abstract class AlarmBackend {
 
   Future<bool> isRinging(int id);
 
+  /// True when alarm [id] has come due but is not sounding yet because
+  /// another alarm is ringing: it waits its turn. Registering it again
+  /// now would cancel that ring.
+  Future<bool> isWaiting(int id);
+
   /// When alarm [id] is registered to ring, or null if it is not registered.
   DateTime? scheduledTime(int id);
 
@@ -98,7 +103,7 @@ class NativeAlarmBackend implements AlarmBackend {
   @override
   Future<void> set(AlarmRequest r) async {
     final fade = Duration(milliseconds: (r.fadeDuration * 1000).round());
-    await Alarm.set(
+    final accepted = await Alarm.set(
       alarmSettings: AlarmSettings(
         id: r.id,
         dateTime: r.dateTime,
@@ -139,6 +144,9 @@ class NativeAlarmBackend implements AlarmBackend {
         androidStaleAfter: const Duration(minutes: 15),
       ),
     );
+    if (!accepted) {
+      throw StateError('The phone refused to register alarm ${r.id}');
+    }
   }
 
   @override
@@ -148,6 +156,20 @@ class NativeAlarmBackend implements AlarmBackend {
 
   @override
   Future<bool> isRinging(int id) => Alarm.isRinging(id);
+
+  @override
+  Future<bool> isWaiting(int id) async {
+    try {
+      final stored = await Alarm.getAlarm(id);
+      if (stored == null) return false;
+      // Only a recent one: an old leftover must never stop an alarm from
+      // being registered again.
+      final late = DateTime.now().difference(stored.dateTime);
+      return !late.isNegative && late < const Duration(minutes: 30);
+    } catch (_) {
+      return false;
+    }
+  }
 
   @override
   DateTime? scheduledTime(int id) {
@@ -292,6 +314,9 @@ class SimulatedAlarmBackend implements AlarmBackend {
 
   @override
   Future<bool> isRinging(int id) async => _ringing.contains(id);
+
+  @override
+  Future<bool> isWaiting(int id) async => false;
 
   @override
   DateTime? scheduledTime(int id) => _scheduled[id]?.dateTime;

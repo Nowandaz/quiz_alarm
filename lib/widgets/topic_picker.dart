@@ -1,12 +1,14 @@
 /// Multi-select of topics: units are listed first and open to show their
 /// topics; with a search box and "all" tick boxes. Used when choosing what an
-/// alarm asks about and what a revision session covers.
+/// alarm asks about and what a revision session covers. Archived units are
+/// left out, unless one of their topics was already ticked.
 library;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/bank_provider.dart';
+import 'app_widgets.dart';
 
 class TopicPicker extends StatefulWidget {
   /// Ids of the topics that are ticked.
@@ -27,6 +29,17 @@ class _TopicPickerState extends State<TopicPicker> {
   final TextEditingController _search = TextEditingController();
   final Set<String> _open = {}; // units whose topics are showing
   String _query = '';
+
+  // Topics ticked when the picker opened. An archived unit holding one of
+  // them stays listed (an alarm set on it must be editable), and does not
+  // vanish the moment its last tick is removed.
+  late final Set<String> _tickedAtStart;
+
+  @override
+  void initState() {
+    super.initState();
+    _tickedAtStart = {...widget.selected};
+  }
 
   @override
   void dispose() {
@@ -69,7 +82,16 @@ class _TopicPickerState extends State<TopicPicker> {
 
     final q = _query.trim().toLowerCase();
     final searching = q.isNotEmpty;
-    final everything = bank.topics.map((t) => t.id).toSet();
+    final units = [
+      for (final u in bank.units)
+        if (!bank.isArchived(u.id) ||
+            bank.topicsOf(u.id).any((t) => _tickedAtStart.contains(t.id)))
+          u,
+    ];
+    final everything = {
+      for (final u in units)
+        for (final t in bank.topicsOf(u.id)) t.id,
+    };
 
     Widget topicRow(String id, String name, int count) => InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -85,7 +107,10 @@ class _TopicPickerState extends State<TopicPicker> {
             Expanded(child: Text(name)),
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: Text('$count', style: theme.textTheme.bodySmall),
+              child: Text(
+                plural(count, 'question'),
+                style: theme.textTheme.bodySmall,
+              ),
             ),
           ],
         ),
@@ -94,7 +119,7 @@ class _TopicPickerState extends State<TopicPicker> {
 
     var anyMatch = false;
     final unitBlocks = <Widget>[];
-    for (final unit in bank.units) {
+    for (final unit in units) {
       final topics = bank.topicsOf(unit.id);
       final unitMatches = unit.name.toLowerCase().contains(q);
       // While searching, show a unit's matching topics (or all of them if
@@ -107,6 +132,9 @@ class _TopicPickerState extends State<TopicPicker> {
 
       final ids = topics.map((t) => t.id).toSet();
       final picked = ids.where(widget.selected.contains).length;
+      // The tick box acts on what is on screen: while searching that is
+      // only the topics shown, never ones the search has hidden.
+      final shownIds = shown.map((t) => t.id).toSet();
       final open = searching || _open.contains(unit.id);
 
       unitBlocks.add(
@@ -130,18 +158,26 @@ class _TopicPickerState extends State<TopicPicker> {
                   children: [
                     Checkbox(
                       tristate: true,
-                      value: _state(ids),
-                      onChanged: ids.isEmpty ? null : (_) => _toggleAll(ids),
+                      value: _state(shownIds),
+                      onChanged: shownIds.isEmpty
+                          ? null
+                          : (_) => _toggleAll(shownIds),
                     ),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(unit.name, style: theme.textTheme.titleSmall),
+                          Text(
+                            bank.isArchived(unit.id)
+                                ? '${unit.name} (archived)'
+                                : unit.name,
+                            style: theme.textTheme.titleSmall,
+                          ),
                           Text(
                             picked == 0
-                                ? '${topics.length} topics'
-                                : '$picked of ${topics.length} topics selected',
+                                ? plural(topics.length, 'topic')
+                                : '$picked of '
+                                      '${plural(topics.length, 'topic')} selected',
                             style: theme.textTheme.bodySmall,
                           ),
                         ],
@@ -244,6 +280,7 @@ Future<Set<String>?> showTopicPickerSheet(
   String title = 'Topics',
 }) {
   var current = {...initial};
+  final allCount = context.read<BankProvider>().activeTopics.length;
   return showModalBottomSheet<Set<String>>(
     context: context,
     isScrollControlled: true,
@@ -255,7 +292,14 @@ Future<Set<String>?> showTopicPickerSheet(
             maxHeight: MediaQuery.of(ctx).size.height * 0.8,
           ),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            // Room for the keyboard, so the list and Done stay in view
+            // while searching.
+            padding: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              16 + MediaQuery.viewInsetsOf(ctx).bottom,
+            ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -263,9 +307,12 @@ Future<Set<String>?> showTopicPickerSheet(
                 Text(title, style: Theme.of(ctx).textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text(
+                  // Every topic ticked means the same as none ticked.
                   current.isEmpty
-                      ? 'Nothing ticked = questions from all topics.'
-                      : '${current.length} topic(s) selected.',
+                      ? 'All topics'
+                      : current.length == allCount
+                      ? 'All topics ($allCount)'
+                      : '${plural(current.length, 'topic')} selected',
                   style: Theme.of(ctx).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 8),

@@ -11,6 +11,7 @@ import '../services/bank_provider.dart';
 import '../services/ai_client.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
 import 'practice_setup.dart';
 
@@ -67,11 +68,7 @@ class _TopicScreenState extends State<TopicScreen> {
   Future<void> _generate() async {
     if (!AiClient.available) {
       if (mounted) {
-        _message(
-          'Sign in needed',
-          'Sign in from Settings (the gear icon on the home screen) to '
-              'have the AI write new questions.',
-        );
+        _message('Sign in needed', signInForAi);
       }
       return;
     }
@@ -85,7 +82,9 @@ class _TopicScreenState extends State<TopicScreen> {
       _message('Could not generate questions', result.error!);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Added ${result.added} new question(s).')),
+        SnackBar(
+          content: Text('Added ${plural(result.added, 'new question')}.'),
+        ),
       );
     }
   }
@@ -148,8 +147,20 @@ class _TopicScreenState extends State<TopicScreen> {
                 24 + MediaQuery.paddingOf(context).bottom,
               ),
               children: [
+                // What the user asked this topic to cover, when they made it.
+                if (widget.topic.isCustom &&
+                    widget.topic.description.trim().isNotEmpty) ...[
+                  Text(
+                    widget.topic.description.trim(),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
                 Text(
-                  '${stats.total} questions - ${stats.seen} answered - '
+                  '${plural(stats.total, 'question')} \u00b7 '
+                  '${stats.seen} answered \u00b7 '
                   '${stats.mastered} correct on the last try',
                   style: theme.textTheme.bodyMedium,
                 ),
@@ -184,6 +195,8 @@ class _TopicScreenState extends State<TopicScreen> {
                   label: Text(
                     _generating
                         ? 'Writing questions (up to a minute)...'
+                        : questions.isEmpty
+                        ? 'Generate 5 with AI'
                         : 'Generate 5 more with AI',
                   ),
                   style: OutlinedButton.styleFrom(
@@ -193,35 +206,60 @@ class _TopicScreenState extends State<TopicScreen> {
                 const SizedBox(height: 16),
                 Text('Questions', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),
-                // Which ones have been done, and which are still to do.
-                Wrap(
-                  spacing: 8,
-                  children: [
-                    for (final (key, label) in [
-                      ('all', 'All (${questions.length})'),
-                      (
-                        'todo',
-                        'Not done (${questions.where((q) => !_progress.containsKey(q.id)).length})',
-                      ),
-                      (
-                        'done',
-                        'Done (${questions.where((q) => _progress.containsKey(q.id)).length})',
-                      ),
-                    ])
-                      ChoiceChip(
-                        label: Text(label),
-                        selected: _filter == key,
-                        showCheckmark: false,
-                        onSelected: (_) => setState(() => _filter = key),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
+                // An empty topic says what to do next instead of showing
+                // filters with nothing to filter.
                 if (questions.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Text('No questions in this topic yet.'),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.auto_awesome,
+                            size: 32,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            'No questions yet',
+                            style: theme.textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Tap Generate 5 with AI to have some written '
+                            'for you.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                else
+                  // Which ones have been done, and which are still to do.
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final (key, label) in [
+                        ('all', 'All (${questions.length})'),
+                        (
+                          'todo',
+                          'Not done (${questions.where((q) => !_progress.containsKey(q.id)).length})',
+                        ),
+                        (
+                          'done',
+                          'Done (${questions.where((q) => _progress.containsKey(q.id)).length})',
+                        ),
+                      ])
+                        ChoiceChip(
+                          label: Text(label),
+                          selected: _filter == key,
+                          showCheckmark: false,
+                          onSelected: (_) => setState(() => _filter = key),
+                        ),
+                    ],
                   ),
+                const SizedBox(height: 8),
                 for (final q in questions.where(
                   (q) => switch (_filter) {
                     'todo' => !_progress.containsKey(q.id),

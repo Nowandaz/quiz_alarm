@@ -15,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../services/account.dart';
 import 'account_screen.dart';
+import 'alarm_feedback.dart';
 import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
 import 'settings_screen.dart';
@@ -59,6 +60,23 @@ class _HomeScreenState extends State<HomeScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<AlarmProvider>(context, listen: false);
+
+      // What Android hands over: the link the browser returns after Google
+      // sign-in, and "Skip" tapped on the heads-up notification.
+      SystemBridge.listen(
+        onAuthLink: (link) async {
+          Account.instance.oauthError.value = await Account.instance
+              .completeOAuth(Uri.parse(link));
+        },
+        onSkipAlarm: (id, ringAt) async {
+          final done = await provider.skipNext(id, ringAt: ringAt);
+          if (!mounted || done == null) return;
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(done)));
+        },
+      );
+      provider.addListener(_askAboutMissed);
+      _askAboutMissed();
       _welcome(simulated: provider.backend.isSimulated);
 
       provider.onAlarmTriggered = (alarm) async {
@@ -82,13 +100,39 @@ class _HomeScreenState extends State<HomeScreen> {
               content: Text('Snoozed for ${alarm.snoozeMinutes} minutes.'),
             ),
           );
+        } else if (result == 'snooze_failed' && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              duration: Duration(seconds: 8),
+              content: Text(
+                'The snooze could not be set, so this alarm will NOT ring '
+                'again. Set another alarm if you still need one.',
+              ),
+            ),
+          );
         }
         provider.ringScreenClosed();
+        // A sign-in screen that was held back while the alarm rang.
+        _requireAccount();
       };
     });
   }
 
   bool _gateOpen = false;
+
+  bool _askingMissed = false;
+
+  /// A ring that seems never to have happened: ask the user about it.
+  Future<void> _askAboutMissed() async {
+    if (!mounted || _askingMissed || _gateOpen) return;
+    final provider = Provider.of<AlarmProvider>(context, listen: false);
+    if (provider.missed.isEmpty || provider.isAlarmRinging) return;
+    _askingMissed = true;
+    final ring = provider.missed.first;
+    await showAlarmFeedback(context, missed: ring);
+    _askingMissed = false;
+    provider.missedHandled(ring); // notifies, which asks about the next one
+  }
 
   @override
   void dispose() {
@@ -104,6 +148,11 @@ class _HomeScreenState extends State<HomeScreen> {
         Account.instance.isSignedIn ||
         _gateOpen ||
         !mounted) {
+      return;
+    }
+    // Never put the sign-in screen over a ringing alarm's quiz: it would
+    // be unreachable while the alarm sounds. It comes up afterwards.
+    if (Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
       return;
     }
     _gateOpen = true;

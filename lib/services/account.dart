@@ -1,9 +1,10 @@
 /// The user's account: signing up, signing in and out, and keeping the
 /// sign-in alive. Talks to Supabase's sign-in service directly over HTTPS.
 ///
-/// The app works without an account (alarms and the built-in question
-/// bank are offline). An account is needed for anything the server does:
-/// the AI today, and syncing and paid features later.
+/// An account is required to use the app (the sign-in screen comes first).
+/// Alarms that are already set still ring without one, and without
+/// internet. The account is what the server knows the user by: syncing
+/// progress, the AI, and paid features later.
 library;
 
 import 'dart:async';
@@ -16,6 +17,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'server_config.dart';
+import 'sync_service.dart';
 
 /// What happened when someone tried to create an account.
 class SignUpResult {
@@ -122,9 +124,12 @@ class Account extends ChangeNotifier {
 
   /// Puts the app in a signed-in state without a server (tests only).
   @visibleForTesting
-  void signInForTest({String email = 'test@example.com'}) {
+  void signInForTest({
+    String email = 'test@example.com',
+    String userId = 'test-user',
+  }) {
     _email = email;
-    _userId = 'test-user';
+    _userId = userId;
     _accessToken = 'test-token';
     _refreshToken = 'test-refresh';
     _expiresAt = DateTime.now().add(const Duration(hours: 1));
@@ -134,6 +139,8 @@ class Account extends ChangeNotifier {
   void resetForTest() {
     _email = _userId = _accessToken = _refreshToken = null;
     _refreshing = null;
+    _recovery = null;
+    recovering.value = false;
   }
 
   // ----------------------------------------------------------------- server
@@ -142,17 +149,17 @@ class Account extends ChangeNotifier {
     String path,
     Map<String, dynamic> body, {
     String? bearer,
+    bool put = false,
   }) {
-    return httpClient
-        .post(
-          Uri.parse('${ServerConfig.supabaseUrl}/auth/v1$path'),
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': ServerConfig.supabaseKey,
-            'Authorization': 'Bearer $bearer',
-          }..removeWhere((k, v) => v == 'Bearer null'),
-          body: jsonEncode(body),
-        )
+    final uri = Uri.parse('${ServerConfig.supabaseUrl}/auth/v1$path');
+    final headers = {
+      'Content-Type': 'application/json',
+      'apikey': ServerConfig.supabaseKey,
+      'Authorization': ?(bearer == null ? null : 'Bearer $bearer'),
+    };
+    return (put
+            ? httpClient.put(uri, headers: headers, body: jsonEncode(body))
+            : httpClient.post(uri, headers: headers, body: jsonEncode(body)))
         .timeout(const Duration(seconds: 20));
   }
 
@@ -177,6 +184,8 @@ class Account extends ChangeNotifier {
       case 'user_already_exists':
       case 'email_exists':
         return 'There is already an account with this email. Sign in instead.';
+      case 'same_password':
+        return 'That is your current password. Choose a different one.';
       case 'weak_password':
         return 'Choose a longer password (at least 6 characters).';
       case 'over_email_send_rate_limit':
@@ -211,10 +220,27 @@ class Account extends ChangeNotifier {
     }
   }
 
+  /// Emails a link for setting a new password. Null on success,
+  /// otherwise a sentence to show.
+  Future<String?> resetPassword(String email) async {
+    try {
+      final res = await _post(
+        // The link in the email opens this app, which then asks for the
+        // new password (see completeOAuth and setNewPassword).
+        '/recover?redirect_to=${Uri.encodeQueryComponent(oauthRedirect)}',
+        {'email': email.trim()},
+      );
+      return res.statusCode == 200 ? null : _reason(res);
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
   Future<SignUpResult> signUp(String email, String password) async {
     try {
       final res = await _post(
-        '/signup?redirect_to=${Uri.encodeQueryComponent('${ServerConfig.apiUrl}/confirmed')}',
+        // The confirmation link opens this app, already signed in.
+        '/signup?redirect_to=${Uri.encodeQueryComponent(oauthRedirect)}',
         {'email': email.trim(), 'password': password},
       );
       if (res.statusCode != 200) return SignUpResult(error: _reason(res));
@@ -222,6 +248,20 @@ class Account extends ChangeNotifier {
       if (data is Map<String, dynamic> && data['access_token'] != null) {
         await _adopt(data);
         return const SignUpResult();
+      }
+      // For an email that already has an account the server answers as if
+      // a new one was made (so strangers cannot test who has an account),
+      // but sends no confirmation email. The give-away is an empty
+      // "identities" list. Saying "account created" then would leave the
+      // person waiting for an email that never comes.
+      if (data is Map &&
+          data['identities'] is List &&
+          (data['identities'] as List).isEmpty) {
+        return const SignUpResult(
+          error:
+              'There is already an account with this email. Sign in instead, '
+              'or tap "Forgot password?" on the Sign in tab.',
+        );
       }
       return const SignUpResult(needsConfirmation: true);
     } catch (e) {
@@ -263,6 +303,28 @@ class Account extends ChangeNotifier {
       ...link.queryParameters,
       if (link.fragment.contains('=')) ...Uri.splitQueryString(link.fragment),
     };
+    // A link from an email (confirm the address, or set a new password)
+    // arrives already carrying a sign-in.
+    final access = params['access_token'];
+    final refresh = params['refresh_token'];
+    if (access != null && refresh != null) {
+      final session = {
+        'access_token': access,
+        'refresh_token': refresh,
+        'expires_in': int.tryParse(params['expires_in'] ?? '') ?? 3600,
+      };
+      if (params['type'] == 'recovery') {
+        // Not signed in yet: first the new password is asked for.
+        await _clear();
+        _recovery = session;
+        recovering.value = true;
+        return null;
+      }
+      return _adoptEmailLink(session);
+    }
+    if (params['error_code'] == 'otp_expired') {
+      return 'That link has expired or was already used. Ask for a new one.';
+    }
     final code = params['code'];
     if (code == null || code.isEmpty) {
       final reason = params['error_description'] ?? params['error'];
@@ -288,15 +350,116 @@ class Account extends ChangeNotifier {
     }
   }
 
+  /// True while a "set a new password" link has been opened and the new
+  /// password is still to be typed. The sign-in screen watches this.
+  final ValueNotifier<bool> recovering = ValueNotifier<bool>(false);
+  Map<String, dynamic>? _recovery;
+
+  /// Signs in with what an emailed link carried, after asking the server
+  /// who it belongs to.
+  Future<String?> _adoptEmailLink(Map<String, dynamic> session) async {
+    try {
+      final res = await httpClient
+          .get(
+            Uri.parse('${ServerConfig.supabaseUrl}/auth/v1/user'),
+            headers: {
+              'apikey': ServerConfig.supabaseKey,
+              'Authorization': 'Bearer ${session['access_token']}',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) return _reason(res);
+      await _adopt({
+        ...session,
+        'user': jsonDecode(utf8.decode(res.bodyBytes)),
+      });
+      return null;
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
+  /// Finishes "Forgot password?": saves [password] as the new one and
+  /// signs in. Returns null on success, otherwise a sentence to show.
+  Future<String?> setNewPassword(String password) async {
+    final session = _recovery;
+    if (session == null) {
+      return 'Open the link in the email again, then choose a password.';
+    }
+    try {
+      final res = await _post(
+        '/user',
+        {'password': password},
+        bearer: session['access_token'] as String,
+        put: true,
+      );
+      if (res.statusCode != 200) return _reason(res);
+      _recovery = null;
+      recovering.value = false;
+      await _adopt({
+        ...session,
+        'user': jsonDecode(utf8.decode(res.bodyBytes)),
+      });
+      return null;
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
+  /// Gives up on setting a new password (back to the sign-in form).
+  void cancelRecovery() {
+    _recovery = null;
+    recovering.value = false;
+  }
+
   Future<void> signOut() async {
     final token = _accessToken;
     await _clear();
     if (token == null) return;
     try {
-      await _post('/logout', const {}, bearer: token);
+      // "local": this phone only. Without it every device signed in to
+      // the account (and the admin site) would be signed out as well.
+      await _post('/logout?scope=local', const {}, bearer: token);
     } catch (_) {
       // Signed out on this phone either way.
     }
+  }
+
+  /// Deletes the account and everything the server holds for it, for
+  /// good. On success this phone is signed out and the person's history
+  /// is cleared from it, so the next account starts clean (alarms stay:
+  /// they belong to the phone). Returns null on success, otherwise a
+  /// sentence to show; nothing is changed on the phone when it fails.
+  Future<String?> deleteAccount() async {
+    final token = await accessToken();
+    if (token == null) return _network('signed out or offline');
+    try {
+      final res = await httpClient
+          .post(
+            Uri.parse(
+              '${ServerConfig.supabaseUrl}/rest/v1/rpc/delete_my_account',
+            ),
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': ServerConfig.supabaseKey,
+              'Authorization': 'Bearer $token',
+            },
+            body: '{}',
+          )
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200 && res.statusCode != 204) return _reason(res);
+    } catch (e) {
+      return _network(e);
+    }
+    try {
+      await SyncService.forgetLocalHistory();
+    } catch (e) {
+      // The account is gone either way; signing out must still happen.
+      debugPrint('Clearing local history failed: $e');
+    }
+    // No call to the server's sign-out: the account no longer exists.
+    await _clear();
+    return null;
   }
 
   /// A token that proves who the user is to the server, refreshed when it

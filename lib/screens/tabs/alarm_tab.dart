@@ -29,6 +29,10 @@ class _AlarmTabState extends State<AlarmTab> {
   // Alarms ticked for deletion. Long-press an alarm to start selecting.
   final Set<int> _selected = {};
 
+  // Below this height of the tab the "Add alarm" button stops floating
+  // over the list (see build).
+  static const double _shortScreen = 600;
+
   void _toggle(int id) => setState(() {
     if (!_selected.remove(id)) _selected.add(id);
   });
@@ -74,6 +78,29 @@ class _AlarmTabState extends State<AlarmTab> {
     return best;
   }
 
+  /// The switch on a card: says what happened once the phone has been
+  /// told, so the user knows the alarm really is set (and for when).
+  Future<void> _setEnabled(AlarmProvider provider, AlarmItem card, bool on) {
+    final messenger = ScaffoldMessenger.of(context);
+    final use24 = context.read<ThemeProvider>().use24Hour;
+    return provider.setEnabled(card, on).then((_) {
+      // The card may hold the alarm as it was before an edit.
+      final alarm = provider.alarms.where((a) => a.id == card.id).firstOrNull;
+      if (alarm == null) return; // deleted meanwhile
+      final next = on ? provider.nextRing(alarm) : null;
+      final text = !on
+          ? 'Alarm off'
+          : next == null
+          ? 'Alarm on'
+          : describeAlarmSet(next, DateTime.now(), use24Hour: use24);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(duration: const Duration(seconds: 3), content: Text(text)),
+        );
+    });
+  }
+
   void _openEditor(BuildContext context, [AlarmItem? alarm]) {
     Navigator.push(
       context,
@@ -101,14 +128,29 @@ class _AlarmTabState extends State<AlarmTab> {
           onPopInvokedWithResult: (didPop, _) {
             if (!didPop) setState(_selected.clear);
           },
-          child: Stack(
-            children: [
-              ListView(
+          child: LayoutBuilder(
+            builder: (context, box) {
+              final safeBottom = MediaQuery.paddingOf(context).bottom;
+              final showAdd = provider.alarms.isNotEmpty && !selecting;
+              // On a short screen the clock card and the "Your alarms" row
+              // fill the whole view, so a floating button would sit on the
+              // row and take its taps. There it gets a strip of its own
+              // under the list instead.
+              final docked = box.maxHeight < _shortScreen;
+              final addButton = PrimaryButton(
+                key: TourKeys.addAlarm,
+                icon: Icons.add_rounded,
+                label: 'Add alarm',
+                onPressed: () => _openEditor(context),
+              );
+              final list = ListView(
                 padding: EdgeInsets.fromLTRB(
                   16,
                   6,
                   16,
-                  90 + MediaQuery.paddingOf(context).bottom,
+                  // Room to scroll the last card clear of the floating
+                  // button (12 below it + 56 tall + a gap above).
+                  showAdd ? (docked ? 16 : 96 + safeBottom) : 24 + safeBottom,
                 ),
                 children: [
                   if (!provider.backend.isSimulated) const AlarmHealthBanner(),
@@ -142,40 +184,26 @@ class _AlarmTabState extends State<AlarmTab> {
                             // Tap to switch between digital and analog.
                             const ClockDisplay(),
                             const SizedBox(height: 16),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.onSurface.withValues(
-                                  alpha: 0.07,
-                                ),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    next == null
-                                        ? Icons.notifications_off_rounded
-                                        : Icons.notifications_active_rounded,
-                                    size: 18,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      next == null
-                                          ? 'No alarm is switched on'
-                                          : 'Next alarm '
-                                                '${describeTimeUntil(next.$2, now)}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            _NextAlarmLine(
+                              text: next != null
+                                  // Which ring is next, then how long
+                                  // until it.
+                                  ? 'Next: '
+                                        '${DateFormat('EEE').format(next.$2)} '
+                                        '${formatClock(next.$2, use24Hour: use24)}'
+                                        ' \u00b7 '
+                                        '${describeTimeUntil(next.$2, now)}'
+                                  : provider.alarms.isEmpty
+                                  ? 'No alarms yet'
+                                  : 'No alarm is on. Add an alarm to start '
+                                        'your morning quiz.',
+                              on: next != null,
+                              // With alarms that are all off, the line is
+                              // the way to a new one. With none at all the
+                              // welcome card below already offers it.
+                              onTap: next == null && provider.alarms.isNotEmpty
+                                  ? () => _openEditor(context)
+                                  : null,
                             ),
                           ],
                         ),
@@ -260,10 +288,7 @@ class _AlarmTabState extends State<AlarmTab> {
                     ),
                   const SizedBox(height: 4),
                   if (provider.alarms.isEmpty)
-                    _EmptyAlarms(
-                      key: TourKeys.addAlarm,
-                      onAdd: () => _openEditor(context),
-                    ),
+                    _EmptyAlarms(onAdd: () => _openEditor(context)),
                   _AlarmList(
                     alarms: provider.alarms,
                     itemBuilder: (a) => Padding(
@@ -279,10 +304,16 @@ class _AlarmTabState extends State<AlarmTab> {
                         onTap: selecting
                             ? () => _toggle(a.id)
                             : () => _openEditor(context, a),
-                        onToggle: (v) {
-                          a.isEnabled = v;
-                          provider.updateAlarm(a);
-                        },
+                        snoozedUntil: provider.snoozedUntil(a),
+                        nextRing: a.isEnabled
+                            ? provider.nextRing(a) ??
+                                  calculateNextTrigger(
+                                    a.time,
+                                    a.activeDays,
+                                    DateTime.now(),
+                                  )
+                            : null,
+                        onToggle: (v) => _setEnabled(provider, a, v),
                         onRingNow: () {
                           provider.ringSoon(a);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -296,20 +327,36 @@ class _AlarmTabState extends State<AlarmTab> {
                     ),
                   ),
                 ],
-              ),
-              if (provider.alarms.isNotEmpty && !selecting)
-                Positioned(
-                  right: 16,
-                  // Sits just above the navigation bar on every screen size.
-                  bottom: 12 + MediaQuery.paddingOf(context).bottom,
-                  child: PrimaryButton(
-                    key: TourKeys.addAlarm,
-                    icon: Icons.add_rounded,
-                    label: 'Add Alarm',
-                    onPressed: () => _openEditor(context),
+              );
+              // The same widgets around the list in every case, so it keeps
+              // its scroll position when the button comes or goes.
+              return Column(
+                children: [
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        list,
+                        if (showAdd && !docked)
+                          Positioned(
+                            right: 16,
+                            // Sits just above the navigation bar.
+                            bottom: 12 + safeBottom,
+                            child: addButton,
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-            ],
+                  if (showAdd && docked)
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(16, 6, 16, 8 + safeBottom),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: addButton,
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         );
       },
@@ -338,19 +385,19 @@ class _AlarmListState extends State<_AlarmList> {
   void didUpdateWidget(_AlarmList old) {
     super.didUpdateWidget(old);
     _first = false;
-    final current = {for (final a in widget.alarms) a.id: a};
-    final next = <AlarmItem>[];
-    for (final a in _shown) {
-      if (current.containsKey(a.id)) {
-        next.add(current[a.id]!);
+    // The list's own order (by time of day) is what shows. An alarm that
+    // was just deleted stays at its old position while it animates out.
+    final current = {for (final a in widget.alarms) a.id};
+    final next = List.of(widget.alarms);
+    for (var i = 0; i < _shown.length; i++) {
+      final a = _shown[i];
+      if (current.contains(a.id)) {
         _leaving.remove(a.id); // deleted then re-added
       } else {
-        next.add(a);
+        next.insert(i.clamp(0, next.length), a);
         _leaving.add(a.id);
       }
     }
-    final shownIds = _shown.map((a) => a.id).toSet();
-    next.addAll(widget.alarms.where((a) => !shownIds.contains(a.id)));
     _shown = next;
   }
 
@@ -377,39 +424,117 @@ class _AlarmListState extends State<_AlarmList> {
   }
 }
 
+/// The line at the bottom of the clock card: when the next alarm rings,
+/// or that none will. With [onTap] it is a prompt that opens the editor.
+class _NextAlarmLine extends StatelessWidget {
+  final String text;
+  final bool on;
+  final VoidCallback? onTap;
+  const _NextAlarmLine({required this.text, required this.on, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.onSurface.withValues(alpha: 0.07),
+      borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(
+                on
+                    ? Icons.notifications_active_rounded
+                    : Icons.notifications_off_rounded,
+                size: 18,
+                color: scheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  text,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              if (onTap != null)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: scheme.onSurfaceVariant,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown before the first alarm exists: how the app works in three steps
+/// and the one thing to do next.
 class _EmptyAlarms extends StatelessWidget {
   final VoidCallback onAdd;
-  const _EmptyAlarms({super.key, required this.onAdd});
+  const _EmptyAlarms({required this.onAdd});
+
+  static const List<String> _steps = [
+    'Set an alarm.',
+    'When it rings, answer questions from your topics.',
+    'Get enough right in a row and it stops.',
+  ];
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(20),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Icon(Icons.alarm_add_rounded, size: 32),
-            ),
-            const SizedBox(height: 14),
-            Text('No alarms yet', style: theme.textTheme.titleLarge),
+            Text('Welcome to BrainWake', style: theme.textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              'Set one and wake up by answering questions.',
+              'An alarm that only stops when you answer revision questions.',
               style: theme.textTheme.bodySmall,
-              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
+            for (var i = 0; i < _steps.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: scheme.onSurface.withValues(alpha: 0.08),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '${i + 1}',
+                        style: const TextStyle(
+                          fontFamily: AppTheme.display,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(_steps[i])),
+                  ],
+                ),
+              ),
+            const SizedBox(height: 4),
+            // The only add button on screen in this state, so the tour
+            // points here.
             PrimaryButton(
+              key: TourKeys.addAlarm,
               icon: Icons.add_rounded,
-              label: 'Add Alarm',
+              label: 'Add your first alarm',
               onPressed: onAdd,
             ),
           ],
@@ -431,6 +556,12 @@ class _AlarmCard extends StatelessWidget {
   final ValueChanged<bool> onToggle;
   final VoidCallback onRingNow;
 
+  /// When a running snooze of this alarm will ring, if there is one.
+  final DateTime? snoozedUntil;
+
+  /// When this alarm rings next, while it is switched on.
+  final DateTime? nextRing;
+
   const _AlarmCard({
     required this.onLongPress,
     required this.selecting,
@@ -442,6 +573,8 @@ class _AlarmCard extends StatelessWidget {
     required this.onTap,
     required this.onToggle,
     required this.onRingNow,
+    this.snoozedUntil,
+    this.nextRing,
   });
 
   @override
@@ -449,7 +582,9 @@ class _AlarmCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final a = alarm;
-    final on = a.isEnabled;
+    // A running snooze will still ring, so the card shows as on.
+    final snoozed = snoozedUntil != null;
+    final on = a.isEnabled || snoozed;
     final ink = on ? scheme.onSurface : scheme.onSurfaceVariant;
     final t = DateTime(2020, 1, 1, a.time.hour, a.time.minute);
     const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -538,11 +673,27 @@ class _AlarmCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontWeight: FontWeight.w700, color: ink),
                 ),
+                if (snoozed) ...[
+                  const SizedBox(height: 8),
+                  Pill(
+                    'Snoozed. Rings at '
+                    '${formatClock(snoozedUntil!, use24Hour: use24Hour)}',
+                    icon: Icons.snooze_rounded,
+                    color: scheme.primary,
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     if (a.activeDays.isEmpty)
-                      const Pill('Once', icon: Icons.looks_one_rounded)
+                      // "Once" alone does not say which day it rings.
+                      Pill(
+                        nextRing == null
+                            ? 'Once'
+                            : 'Once \u00b7 '
+                                  '${describeDay(nextRing!, DateTime.now())}',
+                        icon: Icons.looks_one_rounded,
+                      )
                     else
                       for (var d = 1; d <= 7; d++)
                         Container(

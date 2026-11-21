@@ -1,5 +1,6 @@
-/// App-wide display settings: dark / light theme, the 12 or 24 hour clock
-/// and the digital / analog clock face. Saved on the device.
+/// App-wide display settings: light / dark / follow-the-phone theme, the
+/// 12 or 24 hour clock and the digital / analog clock face. Saved on the
+/// device.
 library;
 
 import 'package:intl/intl.dart';
@@ -20,24 +21,49 @@ class ThemeProvider extends ChangeNotifier {
   /// True = the home clock shows an analog face.
   bool get analogClock => _analogClock;
 
+  bool _headsUp = true;
+
+  /// True = a vibration and notification five minutes before each alarm.
+  bool get headsUp => _headsUp;
+
   ThemeProvider() {
     _load();
   }
 
+  /// Preference holding the theme: 'light', 'dark' or 'system'.
+  static const String themeModePref = 'themeMode';
+
+  /// The theme saved in [prefs]. Versions before the three-way choice
+  /// kept a yes/no 'isDarkTheme'; that is still honoured until a choice is
+  /// saved the new way. Nothing saved at all means dark, as always.
+  static ThemeMode readThemeMode(SharedPreferences prefs) {
+    switch (prefs.getString(themeModePref)) {
+      case 'light':
+        return ThemeMode.light;
+      case 'dark':
+        return ThemeMode.dark;
+      case 'system':
+        return ThemeMode.system;
+    }
+    return (prefs.getBool('isDarkTheme') ?? true)
+        ? ThemeMode.dark
+        : ThemeMode.light;
+  }
+
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    final isDark = prefs.getBool('isDarkTheme') ?? true;
-    _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    _themeMode = readThemeMode(prefs);
     _use24Hour = prefs.getBool('use24Hour') ?? false;
     _analogClock = prefs.getBool('analogClock') ?? false;
+    _headsUp = prefs.getBool('headsUp') ?? true;
     notifyListeners();
   }
 
-  Future<void> toggleTheme(bool isDark) async {
-    _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+  Future<void> setThemeMode(ThemeMode mode) async {
+    _themeMode = mode;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('isDarkTheme', isDark);
+    await prefs.setString(themeModePref, mode.name);
   }
 
   Future<void> setAnalogClock(bool value) async {
@@ -45,6 +71,13 @@ class ThemeProvider extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('analogClock', value);
+  }
+
+  Future<void> setHeadsUp(bool value) async {
+    _headsUp = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('headsUp', value);
   }
 
   Future<void> setUse24Hour(bool value) async {

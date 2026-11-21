@@ -147,31 +147,33 @@ Future<void> showPracticeSetup(
                           label('Questions from'),
                           SegmentedButton<PracticeSource>(
                             showSelectedIcon: false,
-                            segments: const [
-                              ButtonSegment(
+                            // Signed out, only AI and Both are greyed: Bank
+                            // still works and stays visibly selected.
+                            segments: [
+                              const ButtonSegment(
                                 value: PracticeSource.bank,
                                 label: Text('Bank'),
                               ),
                               ButtonSegment(
                                 value: PracticeSource.ai,
-                                label: Text('AI'),
+                                label: const Text('AI'),
+                                enabled: hasKey,
                               ),
                               ButtonSegment(
                                 value: PracticeSource.both,
-                                label: Text('Both'),
+                                label: const Text('Both'),
+                                enabled: hasKey,
                               ),
                             ],
                             selected: {source},
-                            onSelectionChanged: hasKey
-                                ? (s) => refresh(() => source = s.first)
-                                : null,
+                            onSelectionChanged: (s) =>
+                                refresh(() => source = s.first),
                           ),
                           Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
                               !hasKey
-                                  ? 'AI questions need an account. Sign in '
-                                        'from Settings on the Alarms tab.'
+                                  ? signInForAi
                                   : switch (source) {
                                       PracticeSource.bank =>
                                         'Saved questions. Works offline. '
@@ -199,8 +201,8 @@ Future<void> showPracticeSetup(
                             subtitle: Text(
                               hasKey
                                   ? 'Explains where your answer went wrong.'
-                                  : 'Needs an account (sign in from Settings). '
-                                        'You still get the saved explanations.',
+                                  : '$signInForAi You still get the saved '
+                                        'explanations.',
                             ),
                             value: tutor && hasKey,
                             onChanged: hasKey
