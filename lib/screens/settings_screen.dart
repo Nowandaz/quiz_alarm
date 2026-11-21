@@ -491,7 +491,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         subtitle: Text(
                           Billing.last?.premium == true
                               ? Billing.last!.planLabel
-                              : 'See what you get and upgrade',
+                              : 'See the plans and upgrade',
                         ),
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: _openUpgrade,
