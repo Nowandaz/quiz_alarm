@@ -251,6 +251,7 @@ class QuestionRepository {
     unitId: r['unit_id'] as String,
     name: r['name'] as String,
     isCustom: r['is_custom'] == 1,
+    description: (r['description'] ?? '') as String,
   );
 
   static Future<List<Topic>> getTopics() async {
@@ -274,7 +275,11 @@ class QuestionRepository {
 
   /// Creates a topic of the user's own (under [unitId], or under
   /// "My topics"). Returns the existing topic if the name is already used.
-  static Future<Topic> addCustomTopic(String name, {String? unitId}) async {
+  static Future<Topic> addCustomTopic(
+    String name, {
+    String? unitId,
+    String description = '',
+  }) async {
     final db = await _db;
     final clean = name.trim();
     final unit = unitId ?? customUnitId;
@@ -308,8 +313,15 @@ class QuestionRepository {
       'name': clean,
       'sort_order': 1000,
       'is_custom': 1,
+      'description': description.trim(),
     });
-    return Topic(id: id, unitId: unit, name: clean, isCustom: true);
+    return Topic(
+      id: id,
+      unitId: unit,
+      name: clean,
+      isCustom: true,
+      description: description.trim(),
+    );
   }
 
   /// Deletes a user-made topic with its questions.

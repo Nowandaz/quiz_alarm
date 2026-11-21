@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:quiz_alarm/data/alarm_log.dart';
 import 'package:quiz_alarm/data/app_database.dart';
 import 'package:quiz_alarm/data/question_repository.dart';
 import 'package:quiz_alarm/models/models.dart';
@@ -23,6 +24,7 @@ class FakeServer {
     'user_sessions': [],
     'user_attempts': [],
     'user_backups': [],
+    'alarm_events': [],
   };
   final requests = <http.Request>[];
   bool down = false;
@@ -311,6 +313,24 @@ void main() {
       server.requests.clear();
       await SyncService.run();
       expect(server.requests.where((r) => r.method == 'POST'), isEmpty);
+    });
+
+    test('the alarm diary and problem reports go up once', () async {
+      await start(signedIn: true);
+      await AlarmLog.add('rang', alarmId: 5, detail: {'late_seconds': 2});
+      await AlarmLog.add(
+        'report',
+        alarmId: 5,
+        detail: {'rang': false, 'problem': 'no_sound'},
+      );
+      await SyncService.run();
+      final rows = server.tables['alarm_events']!;
+      expect(rows.map((r) => r['type']), ['rang', 'report']);
+      expect(rows.last['detail'], {'rang': false, 'problem': 'no_sound'});
+      expect(rows.last['app_version'], isNotEmpty);
+
+      await SyncService.run();
+      expect(server.tables['alarm_events']!.length, 2);
     });
 
     test('nothing personal is sent when signed out', () async {

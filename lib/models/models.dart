@@ -29,11 +29,16 @@ class Topic {
   final String name;
   final bool isCustom;
 
+  /// For a topic the user made: what it should cover (learning
+  /// objectives). Given to the AI when it writes questions.
+  final String description;
+
   const Topic({
     required this.id,
     required this.unitId,
     required this.name,
     this.isCustom = false,
+    this.description = '',
   });
 }
 
@@ -252,6 +257,11 @@ class AlarmItem {
   /// Length of the snooze, in minutes (3, 5 or 10).
   int snoozeMinutes;
 
+  /// Set when the user skipped the next ring of a repeating alarm (from
+  /// the heads-up notification): nothing rings up to and including this
+  /// moment.
+  DateTime? skipUntil;
+
   static const int minStreak = 1;
   static const int maxStreak = 15;
   static const List<int> snoozeChoices = [3, 5, 10];
@@ -277,6 +287,7 @@ class AlarmItem {
     this.volume = 1.0,
     this.requiredStreak = 2,
     this.snoozeMinutes = 5,
+    this.skipUntil,
   });
 
   /// A random id that is not in [taken].
@@ -303,6 +314,7 @@ class AlarmItem {
     'volume': volume,
     'requiredStreak': requiredStreak,
     'snoozeMinutes': snoozeMinutes,
+    'skipUntil': ?skipUntil?.millisecondsSinceEpoch,
   };
 
   factory AlarmItem.fromJson(Map<String, dynamic> json) => AlarmItem(
@@ -325,5 +337,8 @@ class AlarmItem {
     snoozeMinutes: snoozeChoices.contains(json['snoozeMinutes'])
         ? json['snoozeMinutes'] as int
         : 5,
+    skipUntil: json['skipUntil'] is int
+        ? DateTime.fromMillisecondsSinceEpoch(json['skipUntil'] as int)
+        : null,
   );
 }

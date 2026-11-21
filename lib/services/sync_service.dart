@@ -26,11 +26,13 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../data/alarm_log.dart';
 import '../data/app_database.dart';
 import '../data/question_repository.dart';
 import 'account.dart';
 import 'question_service.dart';
 import 'server_config.dart';
+import 'system_bridge.dart';
 
 class SyncService {
   /// Tests replace this with a fake.
@@ -234,13 +236,7 @@ class SyncService {
   /// A random id in the standard 8-4-4-4-12 form.
   @visibleForTesting
   static String newUuid([Random? random]) {
-    final rng = random ?? Random.secure();
-    final b = List<int>.generate(16, (_) => rng.nextInt(256));
-    b[6] = (b[6] & 0x0f) | 0x40;
-    b[8] = (b[8] & 0x3f) | 0x80;
-    final h = b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
-    return '${h.substring(0, 8)}-${h.substring(8, 12)}-${h.substring(12, 16)}-'
-        '${h.substring(16, 20)}-${h.substring(20)}';
+    return AlarmLog.newUuid(random);
   }
 
   // ---------------------------------------------------------- bank (down)
@@ -519,6 +515,7 @@ class SyncService {
         await txn.rawUpdate('UPDATE sessions SET synced = 0');
         await txn.rawUpdate('UPDATE attempts SET synced = 0');
         await txn.rawUpdate('UPDATE questions SET synced = 0');
+        await txn.rawUpdate('UPDATE alarm_events SET synced = 0');
         await _setMeta(txn, _ownerKey, uid);
       });
     }
@@ -650,7 +647,47 @@ class SyncService {
       );
     }
 
-    // 4. Alarms and settings, when they changed.
+    // 4. The alarm diary and problem reports.
+    final events = await db.query(
+      'alarm_events',
+      where: 'synced = 0',
+      limit: 1000,
+    );
+    if (events.isNotEmpty) {
+      final info = await SystemBridge.deviceInfo();
+      final device = info['model'] == null
+          ? '${info['platform'] ?? ''}'
+          : '${info['manufacturer']} ${info['model']} (Android ${info['android']})';
+      await _upsert(
+        'alarm_events',
+        [
+          for (final e in events)
+            {
+              'user_id': uid,
+              'client_id': e['uuid'],
+              'at': _iso(e['at']),
+              'alarm_id': e['alarm_id'],
+              'type': e['type'],
+              'detail': jsonDecode(e['detail'] as String),
+              'device': device,
+              'app_version': ServerConfig.appVersion,
+            },
+        ],
+        onConflict: 'user_id,client_id',
+        keepExisting: true,
+        token: token,
+      );
+      for (final e in events) {
+        await db.update(
+          'alarm_events',
+          {'synced': 1},
+          where: 'id = ?',
+          whereArgs: [e['id']],
+        );
+      }
+    }
+
+    // 5. Alarms and settings, when they changed.
     final prefs = await SharedPreferences.getInstance();
     final backup = {
       'user_id': uid,

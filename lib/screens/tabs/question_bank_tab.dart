@@ -19,47 +19,65 @@ import '../topic_screen.dart';
 Future<void> showAddTopicDialog(BuildContext context) async {
   final bank = context.read<BankProvider>();
   final nameCtrl = TextEditingController();
+  final aboutCtrl = TextEditingController();
   String unitId = QuestionRepository.customUnitId;
   final created = await showDialog<Topic>(
     context: context,
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setDialogState) => AlertDialog(
         title: const Text('Add a topic'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            TextField(
-              controller: nameCtrl,
-              autofocus: true,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(
-                labelText: 'Topic name',
-                hintText: 'e.g. Antimalarial drugs',
-              ),
-            ),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: unitId,
-              decoration: const InputDecoration(labelText: 'Unit'),
-              items: [
-                for (final u in bank.units)
-                  if (u.id != QuestionRepository.customUnitId)
-                    DropdownMenuItem(value: u.id, child: Text(u.name)),
-                const DropdownMenuItem(
-                  value: QuestionRepository.customUnitId,
-                  child: Text('My topics'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Topic name',
+                  hintText: 'e.g. Antimalarial drugs',
                 ),
-              ],
-              onChanged: (v) => setDialogState(() => unitId = v ?? unitId),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'New topics start empty. Open the topic and tap '
-              '"Generate with AI" to fill it.',
-              style: Theme.of(ctx).textTheme.bodySmall,
-            ),
-          ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: aboutCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                minLines: 2,
+                maxLines: 4,
+                maxLength: 600,
+                decoration: const InputDecoration(
+                  labelText: 'What should it cover? (optional)',
+                  hintText:
+                      'A description or learning objectives, e.g. '
+                      'mechanisms, side effects and resistance',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: unitId,
+                decoration: const InputDecoration(labelText: 'Unit'),
+                items: [
+                  for (final u in bank.units)
+                    if (u.id != QuestionRepository.customUnitId)
+                      DropdownMenuItem(value: u.id, child: Text(u.name)),
+                  const DropdownMenuItem(
+                    value: QuestionRepository.customUnitId,
+                    child: Text('My topics'),
+                  ),
+                ],
+                onChanged: (v) => setDialogState(() => unitId = v ?? unitId),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'New topics start empty. Open the topic and tap '
+                '"Generate with AI" to fill it.',
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -73,6 +91,7 @@ Future<void> showAddTopicDialog(BuildContext context) async {
               final t = await QuestionRepository.addCustomTopic(
                 name,
                 unitId: unitId,
+                description: aboutCtrl.text,
               );
               if (ctx.mounted) Navigator.pop(ctx, t);
             },

@@ -17,6 +17,7 @@ import '../services/sync_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 import 'account_screen.dart';
+import 'alarm_feedback.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -208,6 +209,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     'Always the maximum. The phone volume is raised when an '
                     'alarm rings and put back when you dismiss it.',
                   ),
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                SwitchListTile(
+                  title: const Text('Heads-up before an alarm'),
+                  subtitle: const Text(
+                    'Five minutes before, one long vibration and a '
+                    'notification. Already up? Tap Skip on it and that '
+                    'alarm will not ring.',
+                  ),
+                  secondary: const Icon(Icons.vibration_rounded),
+                  value: themeProvider.headsUp,
+                  onChanged: (v) async {
+                    final alarms = context.read<AlarmProvider>();
+                    await themeProvider.setHeadsUp(v);
+                    await alarms.refreshHeadsUps();
+                  },
+                ),
+                const Divider(height: 1, indent: 16, endIndent: 16),
+                ListTile(
+                  leading: const Icon(Icons.report_problem_outlined),
+                  title: const Text('Report an alarm problem'),
+                  subtitle: const Text(
+                    'An alarm did not ring, rang late or had no sound? '
+                    'Tell us; the technical details are attached for you.',
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => showAlarmFeedback(context),
                 ),
                 if (_android) ...[
                   const Divider(height: 1, indent: 16, endIndent: 16),

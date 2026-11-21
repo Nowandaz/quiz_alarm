@@ -143,7 +143,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       // Whatever goes wrong here, the screen must still close.
       try {
         if (result == 'snooze') {
-          await provider.snoozeAlarm(widget.alarm);
+          _snoozedUntil = await provider.snoozeAlarm(widget.alarm);
         } else {
           await provider.dismissAlarm(widget.alarm);
         }
@@ -162,7 +162,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       QuestionService.changes.value++;
     }
     if (!mounted) return;
-    if (result == 'dismissed') {
+    if (result == 'dismissed' || _snoozedUntil != null) {
       setState(() => _phase = _Phase.done);
       await Future.any([
         Future<void>.delayed(const Duration(seconds: 4)),
@@ -174,6 +174,9 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
 
   // Completed when the user taps the greeting to leave it early.
   final Completer<void> _skipGreeting = Completer<void>();
+
+  /// Set once the alarm was snoozed: when it rings again.
+  DateTime? _snoozedUntil;
 
   Future<void> _submitAnswer(String answer) async {
     final q = _currentQuestion;
@@ -450,6 +453,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   Widget _doneView() {
     final now = DateTime.now();
     final use24 = context.read<ThemeProvider>().use24Hour;
+    final snoozed = _snoozedUntil != null;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -466,14 +470,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.check_circle_rounded,
-              color: AppColors.success,
+            Icon(
+              snoozed ? Icons.snooze_rounded : Icons.check_circle_rounded,
+              color: snoozed ? Colors.white : AppColors.success,
               size: 88,
             ),
             const SizedBox(height: 20),
             Text(
-              '${greetingFor(now.hour, waking: true)}!',
+              snoozed ? 'Snoozed' : '${greetingFor(now.hour, waking: true)}!',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontFamily: AppTheme.display,
@@ -484,7 +488,11 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              widget.preview
+              snoozed
+                  ? 'It rings again at '
+                        '${formatClock(_snoozedUntil!, use24Hour: use24)}, '
+                        'in ${widget.alarm.snoozeMinutes} minutes.'
+                  : widget.preview
                   ? 'Test finished. Nicely done.'
                   : 'Alarm off. It is ${formatClock(now, use24Hour: use24)}.',
               textAlign: TextAlign.center,
@@ -492,7 +500,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              '$_needed in a row. Well done.',
+              snoozed
+                  ? 'Switch the alarm off on the Alarms tab to cancel it.'
+                  : '$_needed in a row. Well done.',
+              textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white54),
             ),
           ],

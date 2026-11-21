@@ -58,6 +58,8 @@
                 <data android:scheme="brainwake" android:host="auth"/>
             </intent-filter>
         </activity>
+        <!-- Shows the "alarm in 5 minutes" heads-up notification. -->
+        <receiver android:name=".PreAlarmReceiver" android:exported="false"/>
         <!-- Shows the "alarm may not ring" notice if the app is force-closed
              (alarm plugin, enableNotificationOnKill). -->
         <service android:name="com.gdelataillade.alarm.services.NotificationOnKillService" />

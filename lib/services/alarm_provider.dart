@@ -8,11 +8,14 @@ import 'dart:convert';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/alarm_log.dart';
 import '../data/question_repository.dart';
 import '../models/models.dart';
 import 'alarm_backend.dart';
 import 'question_service.dart';
 import 'sync_service.dart';
+import 'system_bridge.dart';
+import 'theme_provider.dart';
 
 /// Next time an alarm should fire, strictly after [now].
 /// An empty [activeDays] means "ring once" (next occurrence of [time]).
@@ -68,6 +71,19 @@ String describeTimeUntil(DateTime next, DateTime now) {
     if (minutes > 0 && days == 0) unit(minutes, 'minute'),
   ];
   return 'in ${parts.join(' ')}';
+}
+
+/// A ring that was due but, as far as this phone can tell, never
+/// happened. The home screen asks the user about it.
+class MissedRing {
+  final int alarmId;
+  final String label;
+  final DateTime scheduled;
+  const MissedRing({
+    required this.alarmId,
+    required this.label,
+    required this.scheduled,
+  });
 }
 
 class AlarmProvider extends ChangeNotifier {
@@ -171,6 +187,26 @@ class AlarmProvider extends ChangeNotifier {
         );
     _ringingIds.putIfAbsent(matched.id, () => {}).add(ring.id);
     final isTest = known != null && ring.id == _slotId(known, _testSlot);
+    if (!isTest) {
+      final isSnooze = known != null && ring.id == _slotId(known, _snoozeSlot);
+      final due = isSnooze ? null : await _takeExpected(matched.id);
+      unawaited(
+        AlarmLog.add(
+          'rang',
+          alarmId: matched.id,
+          detail: {
+            'system_id': ring.id,
+            'after_snooze': isSnooze,
+            'scheduled': ?due?.toIso8601String(),
+            'late_seconds': ?(due == null
+                ? null
+                : DateTime.now().difference(due).inSeconds),
+            'known_alarm': known != null,
+          },
+        ),
+      );
+      unawaited(SystemBridge.cancelPreAlarm(matched.id));
+    }
 
     // A "ring once" alarm has now fired: turn it off so it can never
     // be rescheduled for tomorrow.
@@ -255,6 +291,208 @@ class AlarmProvider extends ChangeNotifier {
     return best;
   }
 
+  /// For problem reports: what the phone has registered for [alarm]
+  /// (slot name -> time).
+  Map<String, String> registrations(AlarmItem alarm) {
+    const names = [
+      'once',
+      'mon',
+      'tue',
+      'wed',
+      'thu',
+      'fri',
+      'sat',
+      'sun',
+      'snooze',
+    ];
+    return {
+      for (var s = 0; s <= 8; s++)
+        if (backend.scheduledTime(_slotId(alarm, s)) != null)
+          names[s]: backend.scheduledTime(_slotId(alarm, s))!.toIso8601String(),
+    };
+  }
+
+  /// For problem reports: whether any part of [alarm] is sounding now.
+  Future<bool> isRingingNow(AlarmItem alarm) async {
+    for (var s = 0; s <= 8; s++) {
+      if (await backend.isRinging(_slotId(alarm, s))) return true;
+    }
+    return false;
+  }
+
+  /// When a running snooze of [alarm] will ring, or null.
+  DateTime? snoozedUntil(AlarmItem alarm) {
+    final t = backend.scheduledTime(_slotId(alarm, _snoozeSlot));
+    return t != null && t.isAfter(DateTime.now()) ? t : null;
+  }
+
+  /// The next scheduled ring, leaving a running snooze aside.
+  DateTime? _nextMainRing(AlarmItem alarm) {
+    final now = DateTime.now();
+    DateTime? best;
+    for (final id in [
+      alarm.id,
+      for (var s = 0; s <= 7; s++) _slotId(alarm, s),
+    ]) {
+      final t = backend.scheduledTime(id);
+      if (t != null && t.isAfter(now) && (best == null || t.isBefore(best))) {
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  // ------------------------------------------------------------------
+  // What should happen next, remembered outside the alarm system, so a
+  // ring that never came can be noticed (see _findMissed).
+  // ------------------------------------------------------------------
+  static const String _expectedPref = 'alarm_expected';
+
+  /// Rings that were due but did not happen; the home screen asks the
+  /// user about each and then calls [missedHandled].
+  final List<MissedRing> missed = [];
+
+  void missedHandled(MissedRing ring) {
+    missed.remove(ring);
+    notifyListeners();
+  }
+
+  Future<Map<String, dynamic>> _readExpected() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return (jsonDecode(prefs.getString(_expectedPref) ?? '{}') as Map)
+          .cast<String, dynamic>();
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _writeExpected(Map<String, dynamic> map) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_expectedPref, jsonEncode(map));
+    } catch (_) {}
+  }
+
+  /// Removes and returns the ring that was expected of an alarm.
+  Future<DateTime?> _takeExpected(int alarmId) async {
+    final map = await _readExpected();
+    final ms = map.remove('$alarmId');
+    if (ms == null) return null;
+    await _writeExpected(map);
+    return DateTime.fromMillisecondsSinceEpoch(ms as int);
+  }
+
+  /// After anything that changes when [alarm] rings: remembers the next
+  /// ring, notes it in the diary and moves the heads-up notification.
+  Future<void> _afterArming(AlarmItem alarm) async {
+    try {
+      final next = _nextMainRing(alarm);
+      final map = await _readExpected();
+      final before = map['${alarm.id}'];
+      if (next == null) {
+        map.remove('${alarm.id}');
+      } else {
+        map['${alarm.id}'] = next.millisecondsSinceEpoch;
+      }
+      if (before != map['${alarm.id}']) {
+        await _writeExpected(map);
+        if (next != null) {
+          unawaited(
+            AlarmLog.add(
+              'scheduled',
+              alarmId: alarm.id,
+              detail: {'for': next.toIso8601String()},
+            ),
+          );
+        }
+      }
+      await _syncHeadsUp(alarm, next);
+    } catch (e) {
+      debugPrint('Could not note the next ring of ${alarm.id}: $e');
+    }
+  }
+
+  /// How long before an alarm the heads-up notification arrives.
+  static const Duration headsUpLead = Duration(minutes: 5);
+
+  /// Places (or removes) the "alarm in 5 minutes" notification, which
+  /// vibrates once and offers to skip the alarm for someone already up.
+  Future<void> _syncHeadsUp(AlarmItem alarm, DateTime? next) async {
+    final prefs = await SharedPreferences.getInstance();
+    final wanted = prefs.getBool('headsUp') ?? true;
+    final at = next?.subtract(headsUpLead);
+    if (!wanted ||
+        !alarm.isEnabled ||
+        at == null ||
+        !at.isAfter(DateTime.now().add(const Duration(seconds: 5)))) {
+      await SystemBridge.cancelPreAlarm(alarm.id);
+      return;
+    }
+    final name = alarm.label.isEmpty ? 'Alarm' : alarm.label;
+    final time = formatClock(
+      next!,
+      use24Hour: prefs.getBool('use24Hour') ?? false,
+    );
+    await SystemBridge.schedulePreAlarm(
+      alarm.id,
+      at: at,
+      title: 'Alarm in ${headsUpLead.inMinutes} minutes',
+      body: '$name at $time. Already up? Tap Skip to cancel this one.',
+    );
+  }
+
+  /// Re-places every heads-up notification (after the setting changed).
+  Future<void> refreshHeadsUps() async {
+    for (final a in alarms) {
+      await _syncHeadsUp(a, _nextMainRing(a));
+    }
+  }
+
+  /// Notices rings that were due while the app was not running and, as
+  /// far as the diary shows, never happened.
+  Future<void> _findMissed() async {
+    try {
+      final map = await _readExpected();
+      final now = DateTime.now();
+      var changed = false;
+      for (final a in alarms) {
+        final ms = map['${a.id}'];
+        if (ms == null) continue;
+        final due = DateTime.fromMillisecondsSinceEpoch(ms as int);
+        // Still to come, or due so recently that it may be sounding now.
+        if (now.difference(due) < const Duration(minutes: 3)) continue;
+        map.remove('${a.id}');
+        changed = true;
+        var ringing = false;
+        for (var s = 0; s <= 8; s++) {
+          ringing = ringing || await backend.isRinging(_slotId(a, s));
+        }
+        final rang = (await AlarmLog.recent(alarmId: a.id, limit: 40)).any(
+          (e) =>
+              e.type == 'rang' &&
+              e.at.isAfter(due.subtract(const Duration(minutes: 1))),
+        );
+        if (ringing || rang) continue;
+        missed.add(MissedRing(alarmId: a.id, label: a.label, scheduled: due));
+        unawaited(
+          AlarmLog.add(
+            'missed',
+            alarmId: a.id,
+            urgent: true,
+            detail: {
+              'scheduled': due.toIso8601String(),
+              'noticed_after_minutes': now.difference(due).inMinutes,
+            },
+          ),
+        );
+      }
+      if (changed) await _writeExpected(map);
+    } catch (e) {
+      debugPrint('Could not check for missed alarms: $e');
+    }
+  }
+
   /// Brings the phone's registrations in line with [alarm].
   ///
   /// With [onlyMissing] (used when the app starts) registrations that are
@@ -266,28 +504,31 @@ class AlarmProvider extends ChangeNotifier {
     bool atStartup = false,
   }) async {
     final now = DateTime.now();
+    // A skipped ring: nothing is scheduled up to and including it.
+    final skip = alarm.skipUntil;
+    final from = skip != null && skip.isAfter(now) ? skip : now;
     final wanted = <int, DateTime>{}; // slot -> when
     if (alarm.isEnabled) {
       if (alarm.activeDays.isEmpty) {
-        wanted[_onceSlot] = calculateNextTrigger(alarm.time, const [], now);
+        wanted[_onceSlot] = calculateNextTrigger(alarm.time, const [], from);
       } else {
         for (final day in alarm.activeDays.toSet()) {
           if (day < 1 || day > 7) continue;
-          wanted[day] = calculateNextTrigger(alarm.time, [day], now);
+          wanted[day] = calculateNextTrigger(alarm.time, [day], from);
         }
       }
     }
 
     // Remove what is no longer wanted: days that were unticked, the
-    // ring-once slot, the old-style registration, and (when the alarm is
-    // switched off) a running snooze.
+    // ring-once slot and the old-style registration. A running snooze is
+    // never touched here: editing an alarm must not cancel it (only
+    // switching the alarm off does, see setEnabled).
     await _cancel(alarm.id, keepRinging: onlyMissing);
     for (var slot = 0; slot <= 7; slot++) {
       if (!wanted.containsKey(slot)) {
         await _cancel(_slotId(alarm, slot), keepRinging: onlyMissing);
       }
     }
-    if (!alarm.isEnabled) await _cancel(_slotId(alarm, _snoozeSlot));
 
     final dueToday = DateTime(
       now.year,
@@ -315,6 +556,7 @@ class AlarmProvider extends ChangeNotifier {
       }
       await backend.set(await _request(alarm, entry.value, systemId: id));
     }
+    await _afterArming(alarm);
   }
 
   /// Arms [alarm] with the system. A failure is logged, not thrown: the
@@ -327,9 +569,23 @@ class AlarmProvider extends ChangeNotifier {
     }
   }
 
+  /// Alarms are listed by time of day, earliest first, on or off.
+  void _sort() {
+    alarms.sort((a, b) {
+      final byTime = (a.time.hour * 60 + a.time.minute).compareTo(
+        b.time.hour * 60 + b.time.minute,
+      );
+      return byTime != 0 ? byTime : a.id.compareTo(b.id);
+    });
+  }
+
   Future<void> addAlarm(AlarmItem alarm) async {
     alarms.add(alarm);
+    _sort();
     await _arm(alarm);
+    unawaited(
+      AlarmLog.add('created', alarmId: alarm.id, detail: _summary(alarm)),
+    );
     await saveAlarms();
     unawaited(refillQuestionBank());
   }
@@ -337,13 +593,98 @@ class AlarmProvider extends ChangeNotifier {
   Future<void> updateAlarm(AlarmItem alarm) async {
     final index = alarms.indexWhere((a) => a.id == alarm.id);
     if (index != -1) {
+      final old = alarms[index];
+      // A skipped ring stays skipped unless the alarm's time or days moved.
+      if (old.time == alarm.time &&
+          old.activeDays.join(',') == alarm.activeDays.join(',')) {
+        alarm.skipUntil ??= old.skipUntil;
+      }
       alarms[index] = alarm;
     } else {
       alarms.add(alarm);
     }
+    _sort();
     await _arm(alarm);
+    unawaited(
+      AlarmLog.add(
+        'edited',
+        alarmId: alarm.id,
+        detail: {
+          ..._summary(alarm),
+          'snooze_running': snoozedUntil(alarm) != null,
+        },
+      ),
+    );
     await saveAlarms();
     unawaited(refillQuestionBank());
+  }
+
+  Map<String, Object?> _summary(AlarmItem a) => {
+    'time':
+        '${a.time.hour.toString().padLeft(2, '0')}:'
+        '${a.time.minute.toString().padLeft(2, '0')}',
+    'days': a.activeDays,
+    'enabled': a.isEnabled,
+    'streak': a.requiredStreak,
+    'snooze_minutes': a.snoozeMinutes,
+  };
+
+  /// The switch on an alarm's card. Switching off also cancels a running
+  /// snooze: after this nothing of the alarm will ring.
+  Future<void> setEnabled(AlarmItem alarm, bool on) async {
+    alarm.isEnabled = on;
+    alarm.skipUntil = null;
+    if (!on) {
+      try {
+        await _cancel(_slotId(alarm, _snoozeSlot));
+      } catch (e) {
+        debugPrint('Could not cancel the snooze of ${alarm.id}: $e');
+      }
+    }
+    await _arm(alarm);
+    unawaited(
+      AlarmLog.add(on ? 'switched_on' : 'switched_off', alarmId: alarm.id),
+    );
+    await saveAlarms();
+  }
+
+  /// Skips the next ring only (the heads-up notification's "Skip"): a
+  /// running snooze is cancelled, a ring-once alarm is switched off, a
+  /// repeating alarm misses one day and carries on. Returns a sentence
+  /// saying what was done, or null if there was nothing to skip.
+  Future<String?> skipNext(int alarmId) async {
+    await loaded;
+    final i = alarms.indexWhere((a) => a.id == alarmId);
+    if (i == -1) return null;
+    final alarm = alarms[i];
+    final snooze = snoozedUntil(alarm);
+    final next = _nextMainRing(alarm);
+    if (snooze == null && next == null) return null;
+    String done;
+    if (snooze != null) {
+      await _cancel(_slotId(alarm, _snoozeSlot));
+      done = 'Snooze cancelled.';
+    } else if (alarm.activeDays.isEmpty) {
+      alarm.isEnabled = false;
+      await _arm(alarm);
+      done = 'Alarm switched off.';
+    } else {
+      alarm.skipUntil = next;
+      await _arm(alarm);
+      final after = _nextMainRing(alarm);
+      done = after == null
+          ? 'Skipped.'
+          : 'Skipped. It rings next ${describeTimeUntil(after, DateTime.now())}.';
+    }
+    unawaited(
+      AlarmLog.add(
+        'skipped',
+        alarmId: alarm.id,
+        detail: {'was_due': (snooze ?? next)!.toIso8601String()},
+      ),
+    );
+    await saveAlarms();
+    return done;
   }
 
   Future<void> deleteAlarm(int id) => deleteAlarms([id]);
@@ -363,6 +704,9 @@ class AlarmProvider extends ChangeNotifier {
         debugPrint('Could not cancel alarm ${a.id}: $e');
       }
       _ringingIds.remove(a.id);
+      await _takeExpected(a.id);
+      await SystemBridge.cancelPreAlarm(a.id);
+      unawaited(AlarmLog.add('deleted', alarmId: a.id));
     }
     await saveAlarms();
   }
@@ -393,6 +737,7 @@ class AlarmProvider extends ChangeNotifier {
     if (inList && ringing.every((id) => id == _slotId(alarm, _testSlot))) {
       return; // a simulator test ring: the real schedule was never touched
     }
+    unawaited(AlarmLog.add('dismissed', alarmId: alarm.id));
     if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
       // Registers the weekday that just rang for next week; the other
       // days are already in place.
@@ -405,16 +750,25 @@ class AlarmProvider extends ChangeNotifier {
   }
 
   /// Silences [alarm] and rings it again after its own snooze length.
-  Future<void> snoozeAlarm(AlarmItem alarm) async {
+  /// Returns when it will ring.
+  Future<DateTime> snoozeAlarm(AlarmItem alarm) async {
     final inList = alarms.any((a) => a.id == alarm.id);
     final ringing = await _silence(alarm);
     if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
       await _arm(alarm, onlyMissing: true); // next week's ring of this day
     }
+    final until = DateTime.now().add(Duration(minutes: alarm.snoozeMinutes));
+    unawaited(
+      AlarmLog.add(
+        'snoozed',
+        alarmId: alarm.id,
+        detail: {'until': until.toIso8601String()},
+      ),
+    );
     await backend.set(
       await _request(
         alarm,
-        DateTime.now().add(Duration(minutes: alarm.snoozeMinutes)),
+        until,
         systemId: inList ? _slotId(alarm, _snoozeSlot) : ringing.first,
         title: '${alarm.label} (Snoozed)',
         body:
@@ -422,6 +776,7 @@ class AlarmProvider extends ChangeNotifier {
       ),
     );
     notifyListeners();
+    return until;
   }
 
   /// Makes [alarm] ring [after] from now without touching its schedule
@@ -458,6 +813,8 @@ class AlarmProvider extends ChangeNotifier {
         debugPrint('Saved alarms unreadable: $err');
       }
       alarms = loadedAlarms;
+      _sort();
+      await _findMissed();
 
       var changed = false;
       final now = DateTime.now();

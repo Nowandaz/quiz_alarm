@@ -20,6 +20,11 @@ class ThemeProvider extends ChangeNotifier {
   /// True = the home clock shows an analog face.
   bool get analogClock => _analogClock;
 
+  bool _headsUp = true;
+
+  /// True = a vibration and notification five minutes before each alarm.
+  bool get headsUp => _headsUp;
+
   ThemeProvider() {
     _load();
   }
@@ -30,6 +35,7 @@ class ThemeProvider extends ChangeNotifier {
     _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
     _use24Hour = prefs.getBool('use24Hour') ?? false;
     _analogClock = prefs.getBool('analogClock') ?? false;
+    _headsUp = prefs.getBool('headsUp') ?? true;
     notifyListeners();
   }
 
@@ -45,6 +51,13 @@ class ThemeProvider extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('analogClock', value);
+  }
+
+  Future<void> setHeadsUp(bool value) async {
+    _headsUp = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('headsUp', value);
   }
 
   Future<void> setUse24Hour(bool value) async {

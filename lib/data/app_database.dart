@@ -10,6 +10,7 @@
 ///                weak-question selection and the reports)
 /// - `sessions`   one row per alarm ring or practice session, so the
 ///                reports can show history and time-to-wake
+/// - `alarm_events` the alarm diary: what happened to each alarm and when
 /// - `meta`       small key/value store (seed versions)
 library;
 
@@ -18,7 +19,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 4;
+  static const int schemaVersion = 5;
   static const String fileName = 'brainwake.db';
 
   static Database? _db;
@@ -71,7 +72,8 @@ class AppDatabase {
         unit_id TEXT NOT NULL REFERENCES units(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        is_custom INTEGER NOT NULL DEFAULT 0
+        is_custom INTEGER NOT NULL DEFAULT 0,
+        description TEXT NOT NULL DEFAULT ''
       )''');
     batch.execute('''
       CREATE TABLE questions(
@@ -115,6 +117,7 @@ class AppDatabase {
     for (final sql in _syncIndexes) {
       batch.execute(sql);
     }
+    batch.execute(_createAlarmEvents);
     await batch.commit(noResult: true);
   }
 
@@ -138,6 +141,18 @@ class AppDatabase {
     'CREATE UNIQUE INDEX idx_sessions_uuid ON sessions(uuid)',
     'CREATE UNIQUE INDEX idx_attempts_uuid ON attempts(uuid)',
   ];
+
+  /// The alarm diary (see lib/data/alarm_log.dart).
+  static const String _createAlarmEvents = '''
+    CREATE TABLE alarm_events(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT NOT NULL UNIQUE,
+      at INTEGER NOT NULL,
+      alarm_id INTEGER,
+      type TEXT NOT NULL,
+      detail TEXT NOT NULL DEFAULT '{}',
+      synced INTEGER NOT NULL DEFAULT 0
+    )''';
 
   /// Brings an older database up to date without losing anything.
   static Future<void> _upgrade(Database db, int from, int to) async {
@@ -178,6 +193,13 @@ class AppDatabase {
       for (final sql in _syncIndexes) {
         await db.execute(sql);
       }
+    }
+    if (from < 5) {
+      await db.execute(_createAlarmEvents);
+      // What a topic the user made should cover (given to the AI).
+      await db.execute(
+        "ALTER TABLE topics ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+      );
     }
   }
 

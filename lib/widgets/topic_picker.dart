@@ -264,8 +264,8 @@ Future<Set<String>?> showTopicPickerSheet(
                 const SizedBox(height: 4),
                 Text(
                   current.isEmpty
-                      ? 'Nothing ticked = questions from all topics.'
-                      : '${current.length} topic(s) selected.',
+                      ? 'All topics'
+                      : '${current.length} topic${current.length == 1 ? '' : 's'} selected',
                   style: Theme.of(ctx).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 8),

@@ -279,10 +279,8 @@ class _AlarmTabState extends State<AlarmTab> {
                         onTap: selecting
                             ? () => _toggle(a.id)
                             : () => _openEditor(context, a),
-                        onToggle: (v) {
-                          a.isEnabled = v;
-                          provider.updateAlarm(a);
-                        },
+                        snoozedUntil: provider.snoozedUntil(a),
+                        onToggle: (v) => provider.setEnabled(a, v),
                         onRingNow: () {
                           provider.ringSoon(a);
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -338,19 +336,19 @@ class _AlarmListState extends State<_AlarmList> {
   void didUpdateWidget(_AlarmList old) {
     super.didUpdateWidget(old);
     _first = false;
-    final current = {for (final a in widget.alarms) a.id: a};
-    final next = <AlarmItem>[];
-    for (final a in _shown) {
-      if (current.containsKey(a.id)) {
-        next.add(current[a.id]!);
+    // The list's own order (by time of day) is what shows. An alarm that
+    // was just deleted stays at its old position while it animates out.
+    final current = {for (final a in widget.alarms) a.id};
+    final next = List.of(widget.alarms);
+    for (var i = 0; i < _shown.length; i++) {
+      final a = _shown[i];
+      if (current.contains(a.id)) {
         _leaving.remove(a.id); // deleted then re-added
       } else {
-        next.add(a);
+        next.insert(i.clamp(0, next.length), a);
         _leaving.add(a.id);
       }
     }
-    final shownIds = _shown.map((a) => a.id).toSet();
-    next.addAll(widget.alarms.where((a) => !shownIds.contains(a.id)));
     _shown = next;
   }
 
@@ -431,6 +429,9 @@ class _AlarmCard extends StatelessWidget {
   final ValueChanged<bool> onToggle;
   final VoidCallback onRingNow;
 
+  /// When a running snooze of this alarm will ring, if there is one.
+  final DateTime? snoozedUntil;
+
   const _AlarmCard({
     required this.onLongPress,
     required this.selecting,
@@ -442,6 +443,7 @@ class _AlarmCard extends StatelessWidget {
     required this.onTap,
     required this.onToggle,
     required this.onRingNow,
+    this.snoozedUntil,
   });
 
   @override
@@ -449,7 +451,9 @@ class _AlarmCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final a = alarm;
-    final on = a.isEnabled;
+    // A running snooze will still ring, so the card shows as on.
+    final snoozed = snoozedUntil != null;
+    final on = a.isEnabled || snoozed;
     final ink = on ? scheme.onSurface : scheme.onSurfaceVariant;
     final t = DateTime(2020, 1, 1, a.time.hour, a.time.minute);
     const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
@@ -538,6 +542,15 @@ class _AlarmCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontWeight: FontWeight.w700, color: ink),
                 ),
+                if (snoozed) ...[
+                  const SizedBox(height: 8),
+                  Pill(
+                    'Snoozed. Rings at '
+                    '${formatClock(snoozedUntil!, use24Hour: use24Hour)}',
+                    icon: Icons.snooze_rounded,
+                    color: scheme.primary,
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Row(
                   children: [

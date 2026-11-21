@@ -333,7 +333,12 @@ class QuestionService {
 
     try {
       final items = questionItems(
-        await AiClient.generate(subject, count: count, avoid: avoid),
+        await AiClient.generate(
+          subject,
+          count: count,
+          avoid: avoid,
+          objectives: topic.description,
+        ),
       );
       final stored = <Question>[];
       for (final item in items) {
