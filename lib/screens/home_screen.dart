@@ -68,8 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
           Account.instance.oauthError.value = await Account.instance
               .completeOAuth(Uri.parse(link));
         },
-        onSkipAlarm: (id) async {
-          final done = await provider.skipNext(id);
+        onSkipAlarm: (id, ringAt) async {
+          final done = await provider.skipNext(id, ringAt: ringAt);
           if (!mounted || done == null) return;
           ScaffoldMessenger.of(context)
               .showSnackBar(SnackBar(content: Text(done)));
@@ -100,8 +100,20 @@ class _HomeScreenState extends State<HomeScreen> {
               content: Text('Snoozed for ${alarm.snoozeMinutes} minutes.'),
             ),
           );
+        } else if (result == 'snooze_failed' && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              duration: Duration(seconds: 8),
+              content: Text(
+                'The snooze could not be set, so this alarm will NOT ring '
+                'again. Set another alarm if you still need one.',
+              ),
+            ),
+          );
         }
         provider.ringScreenClosed();
+        // A sign-in screen that was held back while the alarm rang.
+        _requireAccount();
       };
     });
   }
@@ -136,6 +148,11 @@ class _HomeScreenState extends State<HomeScreen> {
         Account.instance.isSignedIn ||
         _gateOpen ||
         !mounted) {
+      return;
+    }
+    // Never put the sign-in screen over a ringing alarm's quiz: it would
+    // be unreachable while the alarm sounds. It comes up afterwards.
+    if (Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
       return;
     }
     _gateOpen = true;

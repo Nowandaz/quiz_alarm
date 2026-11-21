@@ -39,8 +39,9 @@ class MainActivity : FlutterActivity() {
         var pendingAuthLink: String? = null
 
         // The alarm whose heads-up notification had "Skip" tapped.
+        // ("alarm id:ring time", set by SkipAlarmActivity.)
         @JvmStatic
-        var pendingSkipAlarm: Int? = null
+        var pendingSkipAlarm: String? = null
     }
 
     private var channel: MethodChannel? = null
@@ -52,10 +53,10 @@ class MainActivity : FlutterActivity() {
             pendingAuthLink = null
             ch.invokeMethod("authLink", it)
         }
-        pendingSkipAlarm?.let {
-            pendingSkipAlarm = null
-            ch.invokeMethod("skipAlarm", it)
-        }
+        // Kept until the Dart side has taken it (takeSkipAlarm): early in
+        // a cold start nothing is listening yet and a pushed message could
+        // be lost. Dart ignores the repeat.
+        pendingSkipAlarm?.let { ch.invokeMethod("skipAlarm", it) }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -89,6 +90,7 @@ class MainActivity : FlutterActivity() {
                                 applicationContext,
                                 call.argument<Int>("id") ?: 0,
                                 call.argument<Number>("at")?.toLong() ?: 0L,
+                                call.argument<Number>("ringAt")?.toLong() ?: 0L,
                                 call.argument<String>("title"),
                                 call.argument<String>("body")
                             )

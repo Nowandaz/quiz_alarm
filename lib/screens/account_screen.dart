@@ -51,7 +51,16 @@ class _AccountScreenState extends State<AccountScreen> {
 
   /// Signed in (by either route): this screen is done.
   void _onAccount() {
-    if (Account.instance.isSignedIn && mounted) Navigator.pop(context);
+    if (!Account.instance.isSignedIn || !mounted) return;
+    // Remove THIS screen. A plain pop would close whatever is on top of
+    // it, which could be the quiz of an alarm that started ringing.
+    final route = ModalRoute.of(context);
+    if (route == null) return;
+    if (route.isCurrent) {
+      Navigator.pop(context);
+    } else {
+      Navigator.removeRoute(context, route);
+    }
   }
 
   void _onGoogleResult() {

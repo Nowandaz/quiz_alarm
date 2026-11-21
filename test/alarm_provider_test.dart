@@ -42,6 +42,11 @@ class FakeBackend implements AlarmBackend {
 
   @override
   Future<bool> isRinging(int id) async => ringing.contains(id);
+
+  /// Due, but waiting behind another ringing alarm.
+  final Set<int> waiting = {};
+  @override
+  Future<bool> isWaiting(int id) async => waiting.contains(id);
   @override
   DateTime? scheduledTime(int id) => registered[id];
 }
@@ -99,8 +104,10 @@ void main() {
     final lost = today % 7 + 1; // tomorrow
     for (var d = 1; d <= 7; d++) {
       if (d != lost) {
-        backend.registered[slot(1, d)] = DateTime.now().add(
-          Duration(days: 1 + d),
+        backend.registered[slot(1, d)] = calculateNextTrigger(
+          const TimeOfDay(hour: 7, minute: 0),
+          [d],
+          DateTime.now(),
         );
       }
     }
@@ -163,7 +170,11 @@ void main() {
   test('a ring-once alarm that is still registered is left alone', () async {
     await resetApp(prefs: saved([alarm(1, days: const [])]));
     final backend = FakeBackend()
-      ..registered[slot(1, 0)] = DateTime.now().add(const Duration(hours: 2));
+      ..registered[slot(1, 0)] = calculateNextTrigger(
+        const TimeOfDay(hour: 7, minute: 0),
+        const [],
+        DateTime.now(),
+      );
     final provider = AlarmProvider(backend: backend);
     await provider.loaded;
 
@@ -348,6 +359,116 @@ void main() {
       expect(await provider.skipNext(999), isNull);
     },
   );
+
+  test('a late or stale tap on Skip never silences a ringing alarm or '
+      'skips the wrong day', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(31);
+    await provider.addAlarm(a);
+    final first = provider.nextRing(a)!;
+
+    // Tapped for a ring that is not the next one any more.
+    expect(
+      await provider.skipNext(
+        31,
+        ringAt: first.subtract(const Duration(days: 1)),
+      ),
+      isNull,
+    );
+    expect(provider.nextRing(a), first);
+
+    // Tapped after the alarm has started: nothing is touched.
+    await ring(backend, a, first.weekday);
+    final before = Map.of(backend.registered);
+    expect(await provider.skipNext(31, ringAt: first), isNull);
+    expect(backend.ringing, {slot(31, first.weekday)});
+    expect(backend.registered, before);
+
+    // The right tap at the right time works.
+    await provider.dismissAlarm(a);
+    final next = provider.nextRing(a)!;
+    expect(await provider.skipNext(31, ringAt: next), startsWith('Skipped'));
+  });
+
+  test('editing an alarm while it rings does not silence it', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(32);
+    await provider.addAlarm(a);
+    await ring(backend, a, today);
+    await provider.updateAlarm(
+      AlarmItem.fromJson(a.toJson())..label = 'New name',
+    );
+    expect(backend.ringing, {slot(32, today)});
+  });
+
+  test('an alarm waiting behind a ringing one survives the app being '
+      'opened', () async {
+    final a = alarm(33);
+    await resetApp(prefs: saved([a]));
+    final backend = FakeBackend()..waiting.add(slot(33, today));
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    expect(backend.setCalls, isNot(contains(slot(33, today))));
+    expect(backend.setCalls.length, 6, reason: 'the other six days are set');
+  });
+
+  test('a registration at the wrong moment is corrected when the app '
+      'starts (time zone change, half-failed edit)', () async {
+    final a = alarm(34);
+    await resetApp(prefs: saved([a]));
+    final backend = FakeBackend();
+    final wrong = DateTime.now().add(const Duration(days: 2, hours: 3));
+    backend.registered[slot(34, wrong.weekday)] = wrong;
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final fixed = backend.registered[slot(34, wrong.weekday)]!;
+    expect(fixed.hour, 7);
+    expect(fixed.minute, 0);
+  });
+
+  test('re-ticking a day in the editor keeps a skipped ring skipped', () async {
+    await resetApp();
+    final provider = AlarmProvider(backend: FakeBackend());
+    await provider.loaded;
+    final a = alarm(35, days: const [1, 2, 3, 4, 5, 6, 7]);
+    await provider.addAlarm(a);
+    await provider.skipNext(35);
+    final skipped = provider.nextRing(a)!;
+    // The editor hands the days back in a different order.
+    final edited = AlarmItem.fromJson(a.toJson())
+      ..activeDays = [1, 2, 4, 5, 6, 7, 3]
+      ..skipUntil = null
+      ..label = 'Renamed';
+    await provider.updateAlarm(edited);
+    expect(provider.nextRing(edited), skipped);
+    expect(provider.alarms.single.activeDays, [1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  test('a switch tapped on a card from before an edit acts on the '
+      'edited alarm', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final old = alarm(36);
+    await provider.addAlarm(old);
+    final edited = AlarmItem.fromJson(old.toJson())
+      ..time = const TimeOfDay(hour: 9, minute: 30);
+    // Both at once, as a quick tap after saving would do.
+    await Future.wait([
+      provider.updateAlarm(edited),
+      provider.setEnabled(old, false),
+    ]);
+    expect(provider.alarms.single.isEnabled, isFalse);
+    expect(provider.alarms.single.time.hour, 9);
+    expect(backend.registered.keys.where((id) => id ~/ 10 == 36), isEmpty);
+  });
 
   test('a ring that never came is noticed and put in the diary', () async {
     final a = alarm(25);

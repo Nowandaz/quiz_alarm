@@ -58,6 +58,14 @@
                 <data android:scheme="brainwake" android:host="auth"/>
             </intent-filter>
         </activity>
+        <!-- "Skip this alarm" on the heads-up notification. Not exported:
+             only this app's own notification can open it. -->
+        <activity
+            android:name=".SkipAlarmActivity"
+            android:exported="false"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
         <!-- Shows the "alarm in 5 minutes" heads-up notification. -->
         <receiver android:name=".PreAlarmReceiver" android:exported="false"/>
         <!-- Puts the heads-up notifications back after the phone restarts or

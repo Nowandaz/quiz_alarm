@@ -17,9 +17,12 @@ import org.json.JSONObject
 object PreAlarms {
     private const val STORE = "pre_alarms"
 
-    private fun pending(context: Context, id: Int, title: String?, body: String?): PendingIntent {
+    private fun pending(
+        context: Context, id: Int, ringAt: Long, title: String?, body: String?
+    ): PendingIntent {
         val intent = Intent(context, PreAlarmReceiver::class.java)
             .putExtra("alarm_id", id)
+            .putExtra("ring_at", ringAt)
             .putExtra("title", title)
             .putExtra("body", body)
         return PendingIntent.getBroadcast(
@@ -28,9 +31,11 @@ object PreAlarms {
         )
     }
 
-    private fun arm(context: Context, id: Int, at: Long, title: String?, body: String?) {
+    private fun arm(
+        context: Context, id: Int, at: Long, ringAt: Long, title: String?, body: String?
+    ) {
         val alarms = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = pending(context, id, title, body)
+        val intent = pending(context, id, ringAt, title, body)
         val exact = Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()
         try {
             if (exact) {
@@ -43,16 +48,19 @@ object PreAlarms {
         }
     }
 
-    fun schedule(context: Context, id: Int, at: Long, title: String?, body: String?) {
-        arm(context, id, at, title, body)
-        val entry = JSONObject().put("at", at).put("title", title ?: "").put("body", body ?: "")
+    fun schedule(
+        context: Context, id: Int, at: Long, ringAt: Long, title: String?, body: String?
+    ) {
+        arm(context, id, at, ringAt, title, body)
+        val entry = JSONObject().put("at", at).put("ring_at", ringAt)
+            .put("title", title ?: "").put("body", body ?: "")
         context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
             .edit().putString(id.toString(), entry.toString()).apply()
     }
 
     fun cancel(context: Context, id: Int) {
         val alarms = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarms.cancel(pending(context, id, null, null))
+        alarms.cancel(pending(context, id, 0L, null, null))
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(PreAlarmReceiver.notificationId(id))
         context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
@@ -70,7 +78,10 @@ object PreAlarms {
                 val entry = JSONObject(value as String)
                 val at = entry.getLong("at")
                 if (at > now) {
-                    arm(context, id, at, entry.optString("title"), entry.optString("body"))
+                    arm(
+                        context, id, at, entry.optLong("ring_at", 0L),
+                        entry.optString("title"), entry.optString("body")
+                    )
                 } else {
                     edit.remove(key) // its moment has passed
                 }

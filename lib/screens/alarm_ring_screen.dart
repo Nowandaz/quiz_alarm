@@ -149,9 +149,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         }
       } catch (e) {
         debugPrint('Stopping the alarm failed: $e');
-        try {
-          await provider.backend.stop(widget.alarm.id);
-        } catch (_) {}
+        await provider.forceStop(widget.alarm);
+        if (result == 'snooze') result = 'snooze_failed';
       }
       try {
         await QuestionRepository.endSession(

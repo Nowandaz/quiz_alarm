@@ -3,6 +3,8 @@
 /// they quietly do nothing.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -71,6 +73,7 @@ class SystemBridge {
   static Future<void> schedulePreAlarm(
     int id, {
     required DateTime at,
+    required DateTime ringAt,
     required String title,
     required String body,
   }) async {
@@ -79,6 +82,7 @@ class SystemBridge {
       await _channel.invokeMethod<bool>('schedulePreAlarm', {
         'id': id,
         'at': at.millisecondsSinceEpoch,
+        'ringAt': ringAt.millisecondsSinceEpoch,
         'title': title,
         'body': body,
       });
@@ -148,21 +152,38 @@ class SystemBridge {
   /// Covers the one that opened the app and those arriving while it runs.
   static Future<void> listen({
     required void Function(String link) onAuthLink,
-    required void Function(int alarmId) onSkipAlarm,
+    required void Function(int alarmId, DateTime? ringAt) onSkipAlarm,
   }) async {
     if (!_android) return;
+    // Android sends "alarm id:ring time in ms". The same tap can arrive
+    // twice (once pushed, once fetched); the second is ignored.
+    String? lastSkip;
+    void skip(Object? value) {
+      if (value is! String || value == lastSkip) return;
+      lastSkip = value;
+      final parts = value.split(':');
+      final id = int.tryParse(parts.first);
+      final at = parts.length > 1 ? int.tryParse(parts[1]) : null;
+      if (id == null) return;
+      onSkipAlarm(
+        id,
+        at == null || at <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(at),
+      );
+    }
+
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'authLink' && call.arguments is String) {
         onAuthLink(call.arguments as String);
-      } else if (call.method == 'skipAlarm' && call.arguments is int) {
-        onSkipAlarm(call.arguments as int);
+      } else if (call.method == 'skipAlarm') {
+        skip(call.arguments);
+        // Tell Android it arrived, so it is not handed over again.
+        unawaited(_channel.invokeMethod<Object?>('takeSkipAlarm'));
       }
     });
     try {
       final link = await _channel.invokeMethod<String>('takeAuthLink');
       if (link != null) onAuthLink(link);
-      final skip = await _channel.invokeMethod<int>('takeSkipAlarm');
-      if (skip != null) onSkipAlarm(skip);
+      skip(await _channel.invokeMethod<Object?>('takeSkipAlarm'));
     } catch (e) {
       debugPrint('Reading what Android handed over failed: $e');
     }
