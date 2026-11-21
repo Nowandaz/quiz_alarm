@@ -32,6 +32,36 @@ class SystemBridge {
   static Future<bool> openFullScreenIntentSettings() =>
       _call('openFullScreenIntentSettings', fallback: false);
 
+  /// Opens the phone maker's "autostart" page (falls back to the app's own
+  /// settings page).
+  static Future<bool> openAutostartSettings() =>
+      _call('openAutostartSettings', fallback: false);
+
+  /// Phone makers that only let an app start by itself (after a restart,
+  /// or once it was swiped away) if the user allows "autostart" for it.
+  /// Android has no way to read that switch, so the app can only ask.
+  static const Set<String> _autostartMakers = {
+    'xiaomi',
+    'redmi',
+    'poco',
+    'tecno',
+    'infinix',
+    'itel',
+    'oppo',
+    'realme',
+    'vivo',
+    'iqoo',
+    'huawei',
+    'honor',
+    'oneplus',
+  };
+
+  static Future<bool> needsAutostart() async {
+    if (!_android) return false;
+    final maker = '${(await deviceInfo())['manufacturer'] ?? ''}'.toLowerCase();
+    return _autostartMakers.any(maker.contains);
+  }
+
   /// Brings the app to the screen (used when an alarm rings while the app
   /// is in the background).
   static Future<bool> bringToFront() => _call('bringToFront', fallback: false);

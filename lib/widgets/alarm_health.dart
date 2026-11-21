@@ -5,6 +5,7 @@ library;
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/system_bridge.dart';
 
@@ -12,7 +13,10 @@ class AlarmProblem {
   final String title;
   final String detail;
   final Future<void> Function() fix;
-  const AlarmProblem(this.title, this.detail, this.fix);
+
+  /// The button's wording ("Fix" unless something else fits better).
+  final String action;
+  const AlarmProblem(this.title, this.detail, this.fix, {this.action = 'Fix'});
 }
 
 /// Everything currently stopping alarms from working fully. Empty = fine.
@@ -69,8 +73,35 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
         'the notification.',
     () => ask(Permission.systemAlertWindow),
   );
+  // Some makers' phones need "autostart" allowed. Android cannot tell the
+  // app whether it is, so this line shows until the user has opened the
+  // page once (Settings keeps a way back to it).
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool(autostartSeenPref) ?? false) &&
+        await SystemBridge.needsAutostart()) {
+      problems.add(
+        AlarmProblem(
+          'Allow BrainWake to start by itself',
+          'On this phone, alarms and the 5-minute heads-up can be lost '
+              'after a restart unless "Autostart" is switched on for '
+              'BrainWake.',
+          () async {
+            await SystemBridge.openAutostartSettings();
+            await prefs.setBool(autostartSeenPref, true);
+          },
+          action: 'Open',
+        ),
+      );
+    }
+  } catch (e) {
+    debugPrint('Autostart check failed: $e');
+  }
   return problems;
 }
+
+/// Set once the user has been taken to the autostart page.
+const String autostartSeenPref = 'autostart_seen';
 
 /// The warning card. Shows nothing while everything is allowed. Checks
 /// again whenever the app comes back to the screen (e.g. from Settings).
@@ -169,7 +200,7 @@ class _AlarmHealthBannerState extends State<AlarmHealthBanner>
                             await p.fix();
                             await _check();
                           },
-                          child: const Text('Fix'),
+                          child: Text(p.action),
                         ),
                       ],
                     ),

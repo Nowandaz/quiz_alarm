@@ -33,6 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Android switches that let an alarm open the quiz by itself.
   bool _fullScreenOk = true;
   bool _overlayOk = true;
+  bool _needsAutostart = false;
   bool get _android =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
@@ -42,6 +43,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadAllowance();
     _loadStatus();
     _loadAlarmAccess();
+    SystemBridge.needsAutostart().then((v) {
+      if (mounted && v) setState(() => _needsAutostart = true);
+    });
   }
 
   Future<void> _loadAlarmAccess() async {
@@ -237,6 +241,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   trailing: const Icon(Icons.chevron_right_rounded),
                   onTap: () => showAlarmFeedback(context),
                 ),
+                if (_needsAutostart) ...[
+                  const Divider(height: 1, indent: 16, endIndent: 16),
+                  ListTile(
+                    leading: const Icon(Icons.restart_alt_rounded),
+                    title: const Text('Start by itself after a restart'),
+                    subtitle: const Text(
+                      'This phone needs "Autostart" switched on for '
+                      'BrainWake, or alarms and the heads-up can be lost '
+                      'when the phone restarts. Tap to open that page.',
+                    ),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    onTap: SystemBridge.openAutostartSettings,
+                  ),
+                ],
                 if (_android) ...[
                   const Divider(height: 1, indent: 16, endIndent: 16),
                   ListTile(

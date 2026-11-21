@@ -2,6 +2,7 @@ package com.example.quiz_alarm
 
 import android.app.ActivityManager
 import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -27,6 +28,8 @@ import io.flutter.plugin.common.MethodChannel
  *    notification (shown by PreAlarmReceiver); takeSkipAlarm / skipAlarm
  *    hand its "Skip" tap to the Dart side.
  *  - deviceInfo / exitReasons: details attached to problem reports.
+ *  - openAutostartSettings: the phone maker's "autostart" page, where some
+ *    brands decide whether an app may start by itself after a restart.
  */
 class MainActivity : FlutterActivity() {
     companion object {
@@ -101,6 +104,47 @@ class MainActivity : FlutterActivity() {
                         } catch (e: Exception) {
                             result.success(false)
                         }
+                    }
+                    "openAutostartSettings" -> {
+                        // Each maker hides this page somewhere else; try the
+                        // known ones, then fall back to the app's own page.
+                        val pages = listOf(
+                            "com.miui.securitycenter" to "com.miui.permcenter.autostart.AutoStartManagementActivity",
+                            "com.transsion.phonemaster" to "com.cyin.himgr.autostart.AutoStartActivity",
+                            "com.coloros.safecenter" to "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+                            "com.coloros.safecenter" to "com.coloros.safecenter.startupapp.StartupAppListActivity",
+                            "com.oppo.safe" to "com.oppo.safe.permission.startup.StartupAppListActivity",
+                            "com.vivo.permissionmanager" to "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+                            "com.iqoo.secure" to "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity",
+                            "com.huawei.systemmanager" to "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+                            "com.oneplus.security" to "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"
+                        )
+                        var opened = false
+                        for ((pkg, cls) in pages) {
+                            try {
+                                startActivity(
+                                    Intent().setComponent(ComponentName(pkg, cls))
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                                opened = true
+                                break
+                            } catch (e: Exception) {
+                                // Not this maker's phone; try the next.
+                            }
+                        }
+                        if (!opened) {
+                            try {
+                                startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.parse("package:$packageName")
+                                    )
+                                )
+                                opened = true
+                            } catch (e: Exception) {
+                            }
+                        }
+                        result.success(opened)
                     }
                     "deviceInfo" -> {
                         result.success(
