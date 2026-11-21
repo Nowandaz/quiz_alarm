@@ -13,11 +13,13 @@ import 'package:material_ui/material_ui.dart';
 import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/ai_client.dart';
+import '../services/billing.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
 import 'practice_results.dart';
+import 'upgrade_screen.dart';
 
 /// Where a practice session takes its questions from.
 enum PracticeSource { bank, ai, both }
@@ -661,10 +663,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
                       : _aiError!,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
-                TextButton(
-                  onPressed: _askTutor,
-                  child: const Text('Try again'),
-                ),
+                // Out of AI for today on the free plan: trying again would
+                // fail the same way, premium has more.
+                if (AiClient.isDailyLimit(_aiError!) &&
+                    Billing.last?.premium != true)
+                  TextButton(
+                    onPressed: () => showUpgrade(context),
+                    child: const Text('Upgrade'),
+                  )
+                else
+                  TextButton(
+                    onPressed: _askTutor,
+                    child: const Text('Try again'),
+                  ),
               ],
             ),
           )

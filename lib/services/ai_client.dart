@@ -44,6 +44,13 @@ class AiClient {
 
   static const String signInHint = 'Sign in (Settings) to use AI features.';
 
+  /// Whether [message] is the server saying today's AI allowance is used
+  /// up (as opposed to "slow down" or a network problem). Screens offer
+  /// premium next to it. Tied to the server's wording, because errors
+  /// travel through the app as plain sentences.
+  static bool isDailyLimit(String message) =>
+      message.contains("You have used today's");
+
   static Future<Map<String, dynamic>> _call(
     String method,
     String path, {

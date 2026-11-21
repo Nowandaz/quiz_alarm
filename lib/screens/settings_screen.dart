@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../services/alarm_provider.dart';
 import '../services/account.dart';
 import '../services/ai_client.dart';
+import '../services/billing.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -21,6 +22,7 @@ import '../services/theme_provider.dart';
 import '../widgets/app_widgets.dart';
 import 'account_screen.dart';
 import 'alarm_feedback.dart';
+import 'upgrade_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -47,6 +49,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadAllowance();
+    _loadPlan();
     _loadStatus();
     _loadAlarmAccess();
     SharedPreferences.getInstance().then((prefs) {
@@ -93,6 +96,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// The plan, for the "Premium" row (only when signed in and online).
+  Future<void> _loadPlan() async {
+    if (!Account.instance.isSignedIn) return;
+    try {
+      await Billing.plans();
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('Could not read the plan: $e');
+    }
+  }
+
+  Future<void> _openUpgrade() async {
+    await showUpgrade(context);
+    if (!mounted) return;
+    // Premium has a bigger allowance, so the line above may have changed.
+    setState(() {});
+    _loadAllowance();
+  }
+
   Future<void> _openAccount() async {
     await Navigator.push(
       context,
@@ -100,6 +122,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (!mounted) return;
     _loadAllowance();
+    _loadPlan();
     if (AiClient.available) {
       // Top up the offline bank in the background now that the AI works.
       Provider.of<AlarmProvider>(
@@ -460,6 +483,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     '${allowance.remaining} of ${allowance.limit} '
                                     'AI requests left today',
                         ),
+                      ),
+                      const Divider(height: 1, indent: 16, endIndent: 16),
+                      ListTile(
+                        leading: const Icon(Icons.workspace_premium_rounded),
+                        title: const Text('Premium'),
+                        subtitle: Text(
+                          Billing.last?.premium == true
+                              ? Billing.last!.planLabel
+                              : 'See what you get and upgrade',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: _openUpgrade,
                       ),
                       const Divider(height: 1, indent: 16, endIndent: 16),
                       ValueListenableBuilder<bool>(

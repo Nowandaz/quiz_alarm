@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/alarm_provider.dart';
+import '../services/billing.dart';
 import '../services/system_bridge.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
@@ -34,7 +35,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
 
   // The bottom bar slides away while scrolling down a page and comes back
@@ -57,6 +58,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Signing out brings the sign-in screen back.
     Account.instance.addListener(_requireAccount);
+
+    // A payment started before the app was closed may have gone through.
+    WidgetsBinding.instance.addObserver(this);
+    _checkPayment();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = Provider.of<AlarmProvider>(context, listen: false);
@@ -135,7 +140,29 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkPayment();
+  }
+
+  /// Asks about a payment that was started and not yet seen to finish.
+  /// Runs in the background and says something only when it was paid:
+  /// no internet or a slow server must never get in the way of an alarm.
+  Future<void> _checkPayment() async {
+    if (!Account.instance.isSignedIn) return;
+    try {
+      final status = await Billing.checkPending();
+      if (!mounted || status == null || !status.paid) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment received. You are on premium.')),
+      );
+    } catch (e) {
+      debugPrint('Could not check the payment: $e');
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     Account.instance.removeListener(_requireAccount);
     super.dispose();
   }

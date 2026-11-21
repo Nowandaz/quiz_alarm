@@ -75,9 +75,24 @@ class SyncService {
   // ------------------------------------------------------------- scheduling
 
   /// Runs a sync now (or joins the one already running). Never throws.
+  ///
+  /// [fullBank] compares the whole question bank instead of only asking
+  /// for changes (needed after the user's plan changed). If a sync is
+  /// already running, the full comparison is not forgotten: it runs right
+  /// after that one.
   static Future<void> run({bool fullBank = false}) {
-    return _current ??= _run(fullBank: fullBank)
-        .whenComplete(() => _current = null);
+    if (fullBank) _fullWanted = true;
+    return _current ??= _runAll().whenComplete(() => _current = null);
+  }
+
+  static bool _fullWanted = false;
+
+  static Future<void> _runAll() async {
+    do {
+      final full = _fullWanted;
+      _fullWanted = false;
+      await _run(fullBank: full);
+    } while (_fullWanted);
   }
 
   /// Runs a sync a little later; calls close together become one run.

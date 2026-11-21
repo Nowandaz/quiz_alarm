@@ -12,6 +12,7 @@ import 'services/alarm_provider.dart';
 import 'data/alarm_log.dart';
 import 'data/question_repository.dart';
 import 'services/bank_provider.dart';
+import 'services/billing.dart';
 import 'services/sync_service.dart';
 import 'services/theme_provider.dart';
 import 'theme/app_theme.dart';
@@ -36,6 +37,8 @@ Future<void> main() async {
   );
   AlarmLog.onUrgent = () => SyncService.schedule(const Duration(seconds: 2));
   SyncService.loadStatus();
+  // A confirmed payment: fetch the whole bank so premium units arrive.
+  Billing.onPaid = () => SyncService.run(fullBank: true);
   SyncService.schedule(const Duration(seconds: 3));
 
   runApp(
