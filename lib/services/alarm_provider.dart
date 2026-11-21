@@ -223,6 +223,8 @@ class AlarmProvider extends ChangeNotifier {
     final isTest = known != null && ring.id == _slotId(known, _testSlot);
     if (!isTest) {
       final isSnooze = known != null && ring.id == _slotId(known, _snoozeSlot);
+      // A fresh ring (not a snooze coming back) starts the count again.
+      if (!isSnooze) await _setSnoozeCount(matched.id, 0);
       final due = isSnooze ? null : await _takeExpected(matched.id);
       unawaited(
         AlarmLog.add(
@@ -361,6 +363,35 @@ class AlarmProvider extends ChangeNotifier {
       if (await backend.isRinging(_slotId(alarm, s))) return true;
     }
     return false;
+  }
+
+  // ------------------------------------------------------------------
+  // How often the current ring of an alarm has been snoozed. After
+  // [snoozesBeforeTurnOff] snoozes the ring screen offers a plain "Turn
+  // off" button: someone who has dragged it out that long is awake or is
+  // never going to be. Kept in preferences, because the app is often
+  // closed between a snooze and its ring.
+  // ------------------------------------------------------------------
+  static const int snoozesBeforeTurnOff = 2;
+  static const String _snoozeCountPref = 'alarm_snooze_counts';
+  Map<String, dynamic> _snoozeCounts = {};
+
+  int snoozeCount(int alarmId) => (_snoozeCounts['$alarmId'] as int?) ?? 0;
+
+  /// True when [alarm] may be switched off without finishing the quiz.
+  bool canTurnOff(AlarmItem alarm) =>
+      snoozeCount(alarm.id) >= snoozesBeforeTurnOff;
+
+  Future<void> _setSnoozeCount(int alarmId, int count) async {
+    if (count <= 0) {
+      if (_snoozeCounts.remove('$alarmId') == null) return;
+    } else {
+      _snoozeCounts['$alarmId'] = count;
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_snoozeCountPref, jsonEncode(_snoozeCounts));
+    } catch (_) {}
   }
 
   /// When a running snooze of [alarm] will ring, or null.
@@ -850,7 +881,14 @@ class AlarmProvider extends ChangeNotifier {
     if (inList && ringing.every((id) => id == _slotId(alarm, _testSlot))) {
       return; // a simulator test ring: the real schedule was never touched
     }
-    unawaited(AlarmLog.add('dismissed', alarmId: alarm.id));
+    unawaited(
+      AlarmLog.add(
+        'dismissed',
+        alarmId: alarm.id,
+        detail: {'snoozes': snoozeCount(alarm.id)},
+      ),
+    );
+    await _setSnoozeCount(alarm.id, 0);
     if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
       // Registers the weekday that just rang for next week; the other
       // days are already in place.
@@ -884,6 +922,7 @@ class AlarmProvider extends ChangeNotifier {
       await _arm(alarm, onlyMissing: true); // next week's ring of this day
     }
     final until = DateTime.now().add(Duration(minutes: alarm.snoozeMinutes));
+    await _setSnoozeCount(alarm.id, snoozeCount(alarm.id) + 1);
     unawaited(
       AlarmLog.add(
         'snoozed',
@@ -939,6 +978,13 @@ class AlarmProvider extends ChangeNotifier {
         debugPrint('Saved alarms unreadable: $err');
       }
       alarms = loadedAlarms;
+      try {
+        _snoozeCounts = (jsonDecode(
+          prefs.getString(_snoozeCountPref) ?? '{}',
+        ) as Map).cast<String, dynamic>();
+      } catch (_) {
+        _snoozeCounts = {};
+      }
       _sort();
       await _findMissed();
 

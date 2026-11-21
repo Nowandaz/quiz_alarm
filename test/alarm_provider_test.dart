@@ -503,6 +503,39 @@ void main() {
     expect(backend.registered.keys.where((id) => id ~/ 10 == 36), isEmpty);
   });
 
+  test('after two snoozes the alarm may be turned off without the quiz; '
+      'the count starts again with the next ring', () async {
+    await resetApp();
+    final backend = FakeBackend();
+    final provider = AlarmProvider(backend: backend);
+    await provider.loaded;
+    final a = alarm(41);
+    await provider.addAlarm(a);
+
+    await ring(backend, a, today);
+    expect(provider.canTurnOff(a), isFalse);
+    await provider.snoozeAlarm(a);
+    await ring(backend, a, 8); // the snooze comes back
+    expect(provider.canTurnOff(a), isFalse, reason: 'one snooze is not enough');
+    await provider.snoozeAlarm(a);
+    await ring(backend, a, 8);
+    expect(provider.canTurnOff(a), isTrue);
+
+    // It survives the app being closed between snooze and ring.
+    final reopened = AlarmProvider(
+      backend: FakeBackend()..registered.addAll(backend.registered),
+    );
+    await reopened.loaded;
+    expect(reopened.canTurnOff(reopened.alarms.single), isTrue);
+
+    await provider.dismissAlarm(a);
+    expect(provider.canTurnOff(a), isFalse);
+    await provider.snoozeAlarm(a);
+    await provider.snoozeAlarm(a);
+    await ring(backend, a, today); // tomorrow's ordinary ring
+    expect(provider.canTurnOff(a), isFalse);
+  });
+
   test('a ring that never came is noticed and put in the diary', () async {
     final a = alarm(25);
     final due = DateTime.now().subtract(const Duration(hours: 2));

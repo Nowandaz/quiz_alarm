@@ -484,7 +484,8 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                   'The snooze button unlocks after '
                   '${AlarmItem.wrongAnswersForSnooze} wrong answers in a '
                   'row. One right answer resets that count. A wrong answer '
-                  'also resets your streak of correct answers.',
+                  'also resets your streak of correct answers. After two '
+                  'snoozes the alarm can be turned off without the quiz.',
                   style: Theme.of(sheetContext).textTheme.bodySmall,
                   textAlign: TextAlign.center,
                 ),
