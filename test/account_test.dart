@@ -64,10 +64,7 @@ void main() {
     Account.httpClient = MockClient((request) async {
       expect(request.method, 'POST');
       expect(request.url.path, '/auth/v1/recover');
-      expect(
-        request.url.queryParameters['redirect_to'],
-        'https://amkausome.onrender.com',
-      );
+      expect(request.url.queryParameters['redirect_to'], 'brainwake://auth');
       expect(jsonDecode(request.body), {'email': 'me@example.com'});
       return http.Response('{}', 200);
     });
@@ -100,10 +97,7 @@ void main() {
   test('a new account may need the emailed link first', () async {
     Account.httpClient = MockClient((request) async {
       expect(request.url.path, '/auth/v1/signup');
-      expect(
-        request.url.queryParameters['redirect_to'],
-        endsWith('/confirmed'),
-      );
+      expect(request.url.queryParameters['redirect_to'], 'brainwake://auth');
       return http.Response('{"id":"user-1","email":"me@example.com"}', 200);
     });
     final result = await account.signUp('me@example.com', 'secret1');
@@ -216,6 +210,88 @@ void main() {
       contains('cancelled'),
     );
     expect(account.isSignedIn, isFalse);
+  });
+
+  test(
+    'creating an account with an email that already has one says so',
+    () async {
+      // The server pretends a new account was made; the empty "identities"
+      // list is the only sign that it was not.
+      Account.httpClient = MockClient(
+        (_) async => http.Response(
+          '{"id":"fake","email":"me@example.com","identities":[]}',
+          200,
+        ),
+      );
+      final result = await account.signUp('me@example.com', 'secret1');
+      expect(result.needsConfirmation, isFalse);
+      expect(result.error, contains('already an account'));
+    },
+  );
+
+  test('the emailed password link opens the app, which asks for the new '
+      'password and then signs in', () async {
+    final requests = <http.Request>[];
+    Account.httpClient = MockClient((request) async {
+      requests.add(request);
+      expect(request.method, 'PUT');
+      expect(request.url.path, '/auth/v1/user');
+      expect(request.headers['Authorization'], 'Bearer link-access');
+      expect(jsonDecode(request.body), {'password': 'brand-new'});
+      return http.Response('{"id":"user-1","email":"me@example.com"}', 200);
+    });
+    expect(
+      await account.completeOAuth(
+        Uri.parse(
+          'brainwake://auth#access_token=link-access&refresh_token=link-refresh'
+          '&expires_in=3600&type=recovery',
+        ),
+      ),
+      isNull,
+    );
+    expect(account.recovering.value, isTrue);
+    expect(
+      account.isSignedIn,
+      isFalse,
+      reason: 'not until the password is set',
+    );
+
+    expect(await account.setNewPassword('brand-new'), isNull);
+    expect(account.recovering.value, isFalse);
+    expect(account.isSignedIn, isTrue);
+    expect(account.email, 'me@example.com');
+    expect(await account.accessToken(), 'link-access');
+    expect(requests.length, 1);
+  });
+
+  test('the emailed confirmation link signs the new account in', () async {
+    Account.httpClient = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/auth/v1/user');
+      return http.Response('{"id":"user-9","email":"new@example.com"}', 200);
+    });
+    expect(
+      await account.completeOAuth(
+        Uri.parse(
+          'brainwake://auth#access_token=a&refresh_token=r&expires_in=3600&type=signup',
+        ),
+      ),
+      isNull,
+    );
+    expect(account.isSignedIn, isTrue);
+    expect(account.userId, 'user-9');
+  });
+
+  test('an expired email link is explained', () async {
+    expect(
+      await account.completeOAuth(
+        Uri.parse(
+          'brainwake://auth#error=access_denied&error_code=otp_expired'
+          '&error_description=Email+link+is+invalid+or+has+expired',
+        ),
+      ),
+      contains('expired'),
+    );
   });
 
   group('AI server', () {

@@ -37,12 +37,14 @@ class _AccountScreenState extends State<AccountScreen> {
     Account.instance.addListener(_onAccount);
     Account.instance.oauthError.value = null;
     Account.instance.oauthError.addListener(_onGoogleResult);
+    Account.instance.recovering.addListener(_onRecovering);
   }
 
   @override
   void dispose() {
     Account.instance.removeListener(_onAccount);
     Account.instance.oauthError.removeListener(_onGoogleResult);
+    Account.instance.recovering.removeListener(_onRecovering);
     _email.dispose();
     _password.dispose();
     _passwordFocus.dispose();
@@ -92,6 +94,40 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// The emailed "set a new password" link was opened: this screen now
+  /// asks for the new password only.
+  bool get _recovering => Account.instance.recovering.value;
+
+  void _onRecovering() {
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _creating = false;
+      _error = null;
+      _notice = null;
+      _password.clear();
+    });
+  }
+
+  Future<void> _saveNewPassword() async {
+    if (_password.text.length < 6) {
+      setState(() => _error = 'The password needs at least 6 characters.');
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final error = await Account.instance.setNewPassword(_password.text);
+    // On success _onAccount has already closed this screen.
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = error;
+    });
+  }
+
   /// "Forgot password?": emails a link for setting a new one.
   Future<void> _forgotPassword() async {
     final email = _email.text.trim();
@@ -115,13 +151,14 @@ class _AccountScreenState extends State<AccountScreen> {
       _error = error;
       if (error == null) {
         _notice =
-            'We emailed you a link to set a new password. Open it, then '
-            'come back and sign in.';
+            'We emailed you a link. Open it on this phone: it brings you '
+            'back here to choose a new password.';
       }
     });
   }
 
   Future<void> _submit() async {
+    if (_recovering) return _saveNewPassword();
     final email = _email.text.trim();
     final password = _password.text;
     if (!email.contains('@') || email.length < 5) {
@@ -156,8 +193,8 @@ class _AccountScreenState extends State<AccountScreen> {
       if (needsConfirmation) {
         _creating = false;
         _notice =
-            'Account created. Open the link we emailed to $email, then come '
-            'back here and sign in.';
+            'Account created. Open the link we emailed to $email on this '
+            'phone and you are in.';
       }
     });
   }
@@ -215,7 +252,11 @@ class _AccountScreenState extends State<AccountScreen> {
                           ),
                           const SizedBox(height: 36),
                           Text(
-                            _creating ? 'Wake up\nsmarter.' : 'Welcome\nback.',
+                            _recovering
+                                ? 'New\npassword.'
+                                : _creating
+                                ? 'Wake up\nsmarter.'
+                                : 'Welcome\nback.',
                             style: theme.textTheme.displaySmall?.copyWith(
                               fontWeight: FontWeight.w800,
                               height: 1.05,
@@ -224,7 +265,10 @@ class _AccountScreenState extends State<AccountScreen> {
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            _creating
+                            _recovering
+                                ? 'Choose a new password for your account. '
+                                      'You will be signed in straight away.'
+                                : _creating
                                 ? 'The alarm that only stops when you answer '
                                       'revision questions. Create your account '
                                       'to begin.'
@@ -261,27 +305,29 @@ class _AccountScreenState extends State<AccountScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _ModeSwitch(
-                                  creating: _creating,
-                                  onChanged: _setMode,
-                                ),
-                                const SizedBox(height: 16),
-                                TextField(
-                                  controller: _email,
-                                  keyboardType: TextInputType.emailAddress,
-                                  autocorrect: false,
-                                  autofillHints: const [AutofillHints.email],
-                                  textInputAction: TextInputAction.next,
-                                  onSubmitted: (_) =>
-                                      _passwordFocus.requestFocus(),
-                                  decoration: const InputDecoration(
-                                    labelText: 'Email',
-                                    prefixIcon: Icon(
-                                      Icons.mail_outline_rounded,
+                                if (!_recovering) ...[
+                                  _ModeSwitch(
+                                    creating: _creating,
+                                    onChanged: _setMode,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextField(
+                                    controller: _email,
+                                    keyboardType: TextInputType.emailAddress,
+                                    autocorrect: false,
+                                    autofillHints: const [AutofillHints.email],
+                                    textInputAction: TextInputAction.next,
+                                    onSubmitted: (_) =>
+                                        _passwordFocus.requestFocus(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Email',
+                                      prefixIcon: Icon(
+                                        Icons.mail_outline_rounded,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                const SizedBox(height: 12),
+                                  const SizedBox(height: 12),
+                                ],
                                 TextField(
                                   controller: _password,
                                   focusNode: _passwordFocus,
@@ -293,8 +339,10 @@ class _AccountScreenState extends State<AccountScreen> {
                                   ],
                                   onSubmitted: (_) => _busy ? null : _submit(),
                                   decoration: InputDecoration(
-                                    labelText: 'Password',
-                                    helperText: _creating
+                                    labelText: _recovering
+                                        ? 'New password'
+                                        : 'Password',
+                                    helperText: _creating || _recovering
                                         ? 'At least 6 characters.'
                                         : null,
                                     prefixIcon: const Icon(
@@ -315,7 +363,7 @@ class _AccountScreenState extends State<AccountScreen> {
                                     ),
                                   ),
                                 ),
-                                if (!_creating)
+                                if (!_creating && !_recovering)
                                   Align(
                                     alignment: Alignment.centerRight,
                                     child: TextButton(
@@ -339,15 +387,24 @@ class _AccountScreenState extends State<AccountScreen> {
                                       : Icons.arrow_forward_rounded,
                                   label: _busy
                                       ? 'Please wait...'
+                                      : _recovering
+                                      ? 'Save new password'
                                       : _creating
                                       ? 'Create account'
                                       : 'Sign in',
                                 ),
+                                if (_recovering)
+                                  TextButton(
+                                    onPressed: _busy
+                                        ? null
+                                        : Account.instance.cancelRecovery,
+                                    child: const Text('Cancel'),
+                                  ),
                               ],
                             ),
                           ),
 
-                          if (_googleAvailable) ...[
+                          if (_googleAvailable && !_recovering) ...[
                             const SizedBox(height: 18),
                             Row(
                               children: [

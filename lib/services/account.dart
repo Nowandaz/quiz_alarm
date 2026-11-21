@@ -138,6 +138,8 @@ class Account extends ChangeNotifier {
   void resetForTest() {
     _email = _userId = _accessToken = _refreshToken = null;
     _refreshing = null;
+    _recovery = null;
+    recovering.value = false;
   }
 
   // ----------------------------------------------------------------- server
@@ -146,17 +148,17 @@ class Account extends ChangeNotifier {
     String path,
     Map<String, dynamic> body, {
     String? bearer,
+    bool put = false,
   }) {
-    return httpClient
-        .post(
-          Uri.parse('${ServerConfig.supabaseUrl}/auth/v1$path'),
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': ServerConfig.supabaseKey,
-            'Authorization': 'Bearer $bearer',
-          }..removeWhere((k, v) => v == 'Bearer null'),
-          body: jsonEncode(body),
-        )
+    final uri = Uri.parse('${ServerConfig.supabaseUrl}/auth/v1$path');
+    final headers = {
+      'Content-Type': 'application/json',
+      'apikey': ServerConfig.supabaseKey,
+      'Authorization': ?(bearer == null ? null : 'Bearer $bearer'),
+    };
+    return (put
+            ? httpClient.put(uri, headers: headers, body: jsonEncode(body))
+            : httpClient.post(uri, headers: headers, body: jsonEncode(body)))
         .timeout(const Duration(seconds: 20));
   }
 
@@ -181,6 +183,8 @@ class Account extends ChangeNotifier {
       case 'user_already_exists':
       case 'email_exists':
         return 'There is already an account with this email. Sign in instead.';
+      case 'same_password':
+        return 'That is your current password. Choose a different one.';
       case 'weak_password':
         return 'Choose a longer password (at least 6 characters).';
       case 'over_email_send_rate_limit':
@@ -215,15 +219,14 @@ class Account extends ChangeNotifier {
     }
   }
 
-  // The web page the emailed "set a new password" link opens.
-  static const String _resetPage = 'https://amkausome.onrender.com';
-
   /// Emails a link for setting a new password. Null on success,
   /// otherwise a sentence to show.
   Future<String?> resetPassword(String email) async {
     try {
       final res = await _post(
-        '/recover?redirect_to=${Uri.encodeQueryComponent(_resetPage)}',
+        // The link in the email opens this app, which then asks for the
+        // new password (see completeOAuth and setNewPassword).
+        '/recover?redirect_to=${Uri.encodeQueryComponent(oauthRedirect)}',
         {'email': email.trim()},
       );
       return res.statusCode == 200 ? null : _reason(res);
@@ -235,7 +238,8 @@ class Account extends ChangeNotifier {
   Future<SignUpResult> signUp(String email, String password) async {
     try {
       final res = await _post(
-        '/signup?redirect_to=${Uri.encodeQueryComponent('${ServerConfig.apiUrl}/confirmed')}',
+        // The confirmation link opens this app, already signed in.
+        '/signup?redirect_to=${Uri.encodeQueryComponent(oauthRedirect)}',
         {'email': email.trim(), 'password': password},
       );
       if (res.statusCode != 200) return SignUpResult(error: _reason(res));
@@ -243,6 +247,20 @@ class Account extends ChangeNotifier {
       if (data is Map<String, dynamic> && data['access_token'] != null) {
         await _adopt(data);
         return const SignUpResult();
+      }
+      // For an email that already has an account the server answers as if
+      // a new one was made (so strangers cannot test who has an account),
+      // but sends no confirmation email. The give-away is an empty
+      // "identities" list. Saying "account created" then would leave the
+      // person waiting for an email that never comes.
+      if (data is Map &&
+          data['identities'] is List &&
+          (data['identities'] as List).isEmpty) {
+        return const SignUpResult(
+          error:
+              'There is already an account with this email. Sign in instead, '
+              'or tap "Forgot password?" on the Sign in tab.',
+        );
       }
       return const SignUpResult(needsConfirmation: true);
     } catch (e) {
@@ -284,6 +302,28 @@ class Account extends ChangeNotifier {
       ...link.queryParameters,
       if (link.fragment.contains('=')) ...Uri.splitQueryString(link.fragment),
     };
+    // A link from an email (confirm the address, or set a new password)
+    // arrives already carrying a sign-in.
+    final access = params['access_token'];
+    final refresh = params['refresh_token'];
+    if (access != null && refresh != null) {
+      final session = {
+        'access_token': access,
+        'refresh_token': refresh,
+        'expires_in': int.tryParse(params['expires_in'] ?? '') ?? 3600,
+      };
+      if (params['type'] == 'recovery') {
+        // Not signed in yet: first the new password is asked for.
+        await _clear();
+        _recovery = session;
+        recovering.value = true;
+        return null;
+      }
+      return _adoptEmailLink(session);
+    }
+    if (params['error_code'] == 'otp_expired') {
+      return 'That link has expired or was already used. Ask for a new one.';
+    }
     final code = params['code'];
     if (code == null || code.isEmpty) {
       final reason = params['error_description'] ?? params['error'];
@@ -307,6 +347,68 @@ class Account extends ChangeNotifier {
     } catch (e) {
       return _network(e);
     }
+  }
+
+  /// True while a "set a new password" link has been opened and the new
+  /// password is still to be typed. The sign-in screen watches this.
+  final ValueNotifier<bool> recovering = ValueNotifier<bool>(false);
+  Map<String, dynamic>? _recovery;
+
+  /// Signs in with what an emailed link carried, after asking the server
+  /// who it belongs to.
+  Future<String?> _adoptEmailLink(Map<String, dynamic> session) async {
+    try {
+      final res = await httpClient
+          .get(
+            Uri.parse('${ServerConfig.supabaseUrl}/auth/v1/user'),
+            headers: {
+              'apikey': ServerConfig.supabaseKey,
+              'Authorization': 'Bearer ${session['access_token']}',
+            },
+          )
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) return _reason(res);
+      await _adopt({
+        ...session,
+        'user': jsonDecode(utf8.decode(res.bodyBytes)),
+      });
+      return null;
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
+  /// Finishes "Forgot password?": saves [password] as the new one and
+  /// signs in. Returns null on success, otherwise a sentence to show.
+  Future<String?> setNewPassword(String password) async {
+    final session = _recovery;
+    if (session == null) {
+      return 'Open the link in the email again, then choose a password.';
+    }
+    try {
+      final res = await _post(
+        '/user',
+        {'password': password},
+        bearer: session['access_token'] as String,
+        put: true,
+      );
+      if (res.statusCode != 200) return _reason(res);
+      _recovery = null;
+      recovering.value = false;
+      await _adopt({
+        ...session,
+        'user': jsonDecode(utf8.decode(res.bodyBytes)),
+      });
+      return null;
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
+  /// Gives up on setting a new password (back to the sign-in form).
+  void cancelRecovery() {
+    _recovery = null;
+    recovering.value = false;
   }
 
   Future<void> signOut() async {
