@@ -124,7 +124,8 @@ class PreAlarmReceiver : BroadcastReceiver() {
             @Suppress("DEPRECATION")
             val skipAction = Notification.Action.Builder(0, "Skip this alarm", skip).build()
             builder
-                .setSmallIcon(context.applicationInfo.icon)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setColor(context.getColor(R.color.notification_tint))
                 .setContentTitle(title)
                 .setContentText(body)
                 .setStyle(Notification.BigTextStyle().bigText(body))

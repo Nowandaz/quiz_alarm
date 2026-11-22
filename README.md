@@ -1,4 +1,4 @@
-# BrainWake (quiz_alarm)
+# Brain O' Clock (quiz_alarm)
 
 An alarm clock you can only switch off by answering revision questions:
 **a streak of correct answers** dismisses it (easy 2, medium 3, hard 5, custom

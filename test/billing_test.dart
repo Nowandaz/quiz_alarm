@@ -664,7 +664,7 @@ void main() {
       expect(phoneBox, findsNothing);
       expect(
         find.text(
-          'Your card details go straight to Paystack. BrainWake never '
+          'Your card details go straight to Paystack. Brain O\' Clock never '
           'sees them.',
         ),
         findsOneWidget,

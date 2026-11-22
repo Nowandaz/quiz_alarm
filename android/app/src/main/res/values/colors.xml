@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#000000</color>
+    <!-- Tint of the small icon in notifications (the logo's blue). -->
+    <color name="notification_tint">#8AB4F8</color>
+</resources>

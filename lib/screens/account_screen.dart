@@ -275,7 +275,7 @@ class _AccountScreenState extends State<AccountScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'BrainWake',
+                                    'Brain O\' Clock',
                                     style: theme.textTheme.headlineSmall
                                         ?.copyWith(
                                           fontWeight: FontWeight.w800,
@@ -315,8 +315,7 @@ class _AccountScreenState extends State<AccountScreen> {
                                       'You will be signed in straight away.'
                                 : _creating
                                 ? 'The alarm that only stops when you answer '
-                                      'revision questions. Create your account '
-                                      'to begin.'
+                                      'revision questions.'
                                 : 'Sign in to pick up your alarms, progress and '
                                       'questions where you left them.',
                             style: theme.textTheme.bodyLarge?.copyWith(

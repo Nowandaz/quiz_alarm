@@ -233,7 +233,7 @@ void main() {
       expect(find.text(title), findsOneWidget);
       expect(
         find.text(
-          'While on, BrainWake cannot be uninstalled until you switch this '
+          'While on, Brain O\' Clock cannot be uninstalled until you switch this '
           'off here.',
         ),
         findsOneWidget,
@@ -266,7 +266,7 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pumpAndSettle();
       expect(
-        find.text('On. To uninstall BrainWake, switch this off first.'),
+        find.text('On. To uninstall Brain O\' Clock, switch this off first.'),
         findsOneWidget,
       );
 
@@ -279,7 +279,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text('On. To uninstall BrainWake, switch this off first.'),
+        find.text('On. To uninstall Brain O\' Clock, switch this off first.'),
         findsOneWidget,
       );
 
@@ -287,7 +287,7 @@ void main() {
       await tester.tap(find.text(title));
       await tester.pumpAndSettle();
       expect(
-        find.text('On. To uninstall BrainWake, switch this off first.'),
+        find.text('On. To uninstall Brain O\' Clock, switch this off first.'),
         findsNothing,
       );
       debugDefaultTargetPlatformOverride = null;

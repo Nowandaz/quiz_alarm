@@ -8,6 +8,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show Color;
 
 import 'package:alarm/alarm.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -125,6 +126,9 @@ class NativeAlarmBackend implements AlarmBackend {
           // Swiping the notification away must NOT stop the alarm; only
           // the quiz can. (The plugin puts the notification back.)
           androidStopAlarmOnDismiss: false,
+          // The app's own mark (res/drawable*/ic_notification.png).
+          icon: 'ic_notification',
+          iconColor: const Color(0xFF8AB4F8),
         ),
         // Android alarms keep working after the app is swiped away, so
         // only iOS (where they do not) shows the "may not ring" warning.

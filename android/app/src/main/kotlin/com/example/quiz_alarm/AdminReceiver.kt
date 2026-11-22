@@ -7,7 +7,7 @@ import android.content.Intent
 
 /**
  * The optional "cannot be uninstalled while an alarm rings" switch
- * (Settings in the app). When the user turns it on, BrainWake becomes a
+ * (Settings in the app). When the user turns it on, Brain O' Clock becomes a
  * "device admin app", and Android refuses to uninstall such an app until
  * that is switched off again.
  *
@@ -29,6 +29,6 @@ class AdminReceiver : DeviceAdminReceiver() {
             }
             return "An alarm is ringing. Answer it first."
         }
-        return "BrainWake could then be uninstalled while an alarm is ringing."
+        return "Brain O' Clock could then be uninstalled while an alarm is ringing."
     }
 }

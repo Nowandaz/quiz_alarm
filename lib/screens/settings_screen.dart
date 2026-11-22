@@ -152,8 +152,8 @@ class _SettingsScreenState extends State<SettingsScreen>
         title: const Text('Block uninstalling'),
         content: const SingleChildScrollView(
           child: Text(
-            'Android will ask you to make BrainWake a device admin app. '
-            'BrainWake uses this for one thing only: to stop the app being '
+            'Android will ask you to make Brain O\' Clock a device admin app. '
+            'Brain O\' Clock uses this for one thing only: to stop the app being '
             'uninstalled while an alarm is ringing. If someone tries to '
             'remove it during an alarm, the phone locks. You can switch it '
             'off here at any time when no alarm is ringing.',
@@ -466,12 +466,16 @@ class _SettingsScreenState extends State<SettingsScreen>
         value: _muteAnswerSounds,
         onChanged: _setMuteAnswerSounds,
       ),
-      const ListTile(
-        leading: Icon(Icons.volume_up_rounded),
-        title: Text('Alarm volume'),
+      ListTile(
+        leading: const Icon(Icons.volume_up_rounded),
+        title: const Text('Alarm volume'),
         subtitle: Text(
-          'Always the maximum. The phone volume is raised when an '
-          'alarm rings and put back when you dismiss it.',
+          Entitlements.instance.canSetVolume
+              ? 'Set on each alarm and locked while it rings. The phone '
+                    'volume is put back when you dismiss it.'
+              : 'Always the maximum. The phone volume is raised when an '
+                    'alarm rings and put back when you dismiss it. '
+                    'Pro lets you choose a volume for each alarm.',
         ),
       ),
       SwitchListTile(
@@ -520,7 +524,7 @@ class _SettingsScreenState extends State<SettingsScreen>
           title: const Text('Start by itself after a restart'),
           subtitle: const Text(
             'This phone needs "Autostart" switched on for '
-            'BrainWake, or alarms and the heads-up can be lost '
+            'Brain O\' Clock, or alarms and the heads-up can be lost '
             'when the phone restarts. Tap to open that page.',
           ),
           trailing: const Icon(Icons.chevron_right_rounded),
@@ -572,8 +576,8 @@ class _SettingsScreenState extends State<SettingsScreen>
           title: const Text('Block uninstalling while an alarm rings'),
           subtitle: Text(
             _uninstallBlocked
-                ? 'On. To uninstall BrainWake, switch this off first.'
-                : 'While on, BrainWake cannot be uninstalled until you '
+                ? 'On. To uninstall Brain O\' Clock, switch this off first.'
+                : 'While on, Brain O\' Clock cannot be uninstalled until you '
                       'switch this off here.',
           ),
           secondary: const Icon(Icons.shield_outlined),

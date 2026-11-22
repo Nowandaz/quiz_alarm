@@ -1,85 +1,42 @@
-/// The app's own look, drawn in code so it stays sharp at any size and
-/// follows the phone's accent colour: the logo mark, the dial that
-/// decorates the sign-in screen, and Google's "G" for its sign-in button.
+/// The app's own look: the logo, the dial that decorates the sign-in
+/// screen (drawn in code), and Google's "G" for its sign-in button.
 library;
 
 import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
-/// The logo: an alarm clock whose hands form a tick, because the alarm
-/// stops when the answer is right.
+/// The logo (the brain-and-clock mark on black), with rounded corners.
 class BrandMark extends StatelessWidget {
   final double size;
   const BrandMark({super.key, this.size = 64});
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(size * 0.3),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color.lerp(scheme.primary, Colors.white, 0.28)!,
-            scheme.primary,
-            Color.lerp(scheme.primary, Colors.black, 0.25)!,
-          ],
-        ),
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(size * 0.26),
+        border: Border.all(color: const Color(0x338AB4F8)),
         boxShadow: [
           BoxShadow(
-            color: scheme.primary.withValues(alpha: 0.45),
-            blurRadius: size * 0.5,
-            offset: Offset(0, size * 0.14),
+            color: const Color(0xFF8AB4F8).withValues(alpha: 0.25),
+            blurRadius: size * 0.45,
+            offset: Offset(0, size * 0.1),
           ),
         ],
       ),
-      child: CustomPaint(painter: _MarkPainter(scheme.onPrimary)),
+      clipBehavior: Clip.antiAlias,
+      child: Image.asset(
+        'assets/brand/logo.png',
+        fit: BoxFit.cover,
+        // Tests and odd builds without the picture still get a tile.
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+      ),
     );
   }
-}
-
-class _MarkPainter extends CustomPainter {
-  final Color ink;
-  const _MarkPainter(this.ink);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final s = size.width;
-    final c = Offset(s / 2, s * 0.54);
-    final r = s * 0.25;
-    final line = Paint()
-      ..color = ink
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = s * 0.075
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    canvas.drawCircle(c, r, line); // the clock face
-    // The two bells.
-    for (final side in const [-1.0, 1.0]) {
-      canvas.drawLine(
-        Offset(c.dx + side * s * 0.30, c.dy - s * 0.25),
-        Offset(c.dx + side * s * 0.20, c.dy - s * 0.33),
-        line,
-      );
-    }
-    // The hands, as a tick.
-    canvas.drawPath(
-      Path()
-        ..moveTo(c.dx - r * 0.45, c.dy + r * 0.02)
-        ..lineTo(c.dx - r * 0.08, c.dy + r * 0.38)
-        ..lineTo(c.dx + r * 0.50, c.dy - r * 0.36),
-      line,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_MarkPainter old) => old.ink != ink;
 }
 
 /// A large, faint clock dial with a soft glow, for the top of the sign-in
