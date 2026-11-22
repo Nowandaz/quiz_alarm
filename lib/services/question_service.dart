@@ -382,8 +382,10 @@ class QuestionService {
     required int count,
     Random? rng,
   }) async {
-    if (!AiClient.available) {
-      return const GenerationResult(error: AiClient.signInHint);
+    if (!canUseAi) {
+      return GenerationResult(
+        error: AiClient.available ? AiClient.proHint : AiClient.signInHint,
+      );
     }
     final wanted = topicIds.toSet();
     final topics =
@@ -423,13 +425,14 @@ class QuestionService {
   /// Keeps fresh questions ready: for the topics behind [selectors], any
   /// topic with fewer than [targetUnseen] never-answered questions gets
   /// new ones from the AI (emptiest topics first, at most [maxTopics] per
-  /// run to stay inside free-tier limits). Does nothing when signed out.
+  /// run to stay inside the daily allowance). Does nothing when signed out
+  /// or on a plan without the AI.
   static Future<GenerationResult> topUp(
     Iterable<String> selectors, {
     int targetUnseen = 5,
     int maxTopics = 2,
   }) async {
-    if (_toppingUp || !AiClient.available) {
+    if (_toppingUp || !canUseAi) {
       return const GenerationResult();
     }
     _toppingUp = true;

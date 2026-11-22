@@ -109,7 +109,10 @@ void main() {
       expect(find.byIcon(Icons.lock_rounded), findsOneWidget);
       await tester.tap(find.text('Ask the AI tutor why'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('The AI tutor is part of Pro.'), findsOneWidget);
+      expect(
+        find.textContaining('The AI tutor is part of Pro.'),
+        findsOneWidget,
+      );
       expect(
         find.text(level == PlanLevel.guest ? 'Create account' : 'See plans'),
         findsOneWidget,

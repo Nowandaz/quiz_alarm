@@ -35,8 +35,14 @@ void main() {
     // nothing.
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    for (final name in ['xyz.luan/audioplayers', 'xyz.luan/audioplayers.global']) {
-      messenger.setMockMethodCallHandler(MethodChannel(name), (_) async => null);
+    for (final name in [
+      'xyz.luan/audioplayers',
+      'xyz.luan/audioplayers.global',
+    ]) {
+      messenger.setMockMethodCallHandler(
+        MethodChannel(name),
+        (_) async => null,
+      );
     }
   });
   tearDown(() {
@@ -58,6 +64,7 @@ void main() {
   /// Opens "Test alarm screen" on a topic holding one typed question.
   Future<void> ring(WidgetTester tester, {required String answer}) async {
     final topicId = await tester.runAsync(() async {
+      await QuestionRepository.ensureReady();
       final topic = await QuestionRepository.addCustomTopic('Ring test');
       await QuestionRepository.addQuestion(
         Question(
@@ -100,7 +107,6 @@ void main() {
   }
 
   Future<void> type(WidgetTester tester, String text) async {
-    debugPrint("TEXTS: ${tester.widgetList<Text>(find.byType(Text)).map((t) => t.data).toList()}");
     await tester.enterText(find.byType(TextField), text);
     await tester.tap(find.text('Submit'));
     await tester.runAsync(
@@ -131,9 +137,7 @@ void main() {
   });
 
   testWidgets('muted: no right or wrong sound is played', (tester) async {
-    await tester.runAsync(
-      () => resetApp(prefs: {'muteAnswerSounds': true}),
-    );
+    await tester.runAsync(() => resetApp(prefs: {'muteAnswerSounds': true}));
     Entitlements.instance.setForTest(PlanLevel.free);
     await ring(tester, answer: 'Naloxone');
     await type(tester, 'flumazenil');

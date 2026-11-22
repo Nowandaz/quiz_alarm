@@ -28,6 +28,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../data/alarm_log.dart';
 import '../data/app_database.dart';
+import '../data/flag_store.dart';
 import '../data/question_repository.dart';
 import 'account.dart';
 import 'entitlements.dart';
@@ -135,6 +136,8 @@ class SyncService {
           // answers can only be kept for questions the phone has.
           if (bankOk && await _restoreOnce()) QuestionService.changes.value++;
           await _upload();
+          // Questions flagged for review (never throws).
+          await FlagStore.upload();
         } catch (e) {
           problems.add('your progress: ${_short(e)}');
         }
