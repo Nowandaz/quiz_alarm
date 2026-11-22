@@ -6,35 +6,22 @@ import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
-/// The logo (the brain-and-clock mark on black), with rounded corners.
+/// The logo: the brain-and-clock mark on a transparent background, so it
+/// sits straight on the screen in light and dark mode.
 class BrandMark extends StatelessWidget {
   final double size;
   const BrandMark({super.key, this.size = 64});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return Image.asset(
+      'assets/brand/logo.png',
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(size * 0.26),
-        border: Border.all(color: const Color(0x338AB4F8)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF8AB4F8).withValues(alpha: 0.25),
-            blurRadius: size * 0.45,
-            offset: Offset(0, size * 0.1),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Image.asset(
-        'assets/brand/logo.png',
-        fit: BoxFit.cover,
-        // Tests and odd builds without the picture still get a tile.
-        errorBuilder: (_, _, _) => const SizedBox.shrink(),
-      ),
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.medium,
+      // Tests and odd builds without the picture still keep the space.
+      errorBuilder: (_, _, _) => SizedBox(width: size, height: size),
     );
   }
 }
