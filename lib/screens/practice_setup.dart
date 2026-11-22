@@ -8,7 +8,9 @@ import 'package:provider/provider.dart';
 
 import '../services/bank_provider.dart';
 import '../services/ai_client.dart';
+import '../services/entitlements.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import '../widgets/topic_picker.dart';
 import 'practice_screen.dart';
 
@@ -19,10 +21,15 @@ Future<void> showPracticeSetup(
   required Set<String> initialTopics,
   String title = 'Practice',
 }) async {
-  final hasKey = AiClient.available;
+  // The AI needs a paid plan (and being signed in).
+  final aiOpen = Entitlements.instance.canUseAi;
+  final hasKey = AiClient.available && aiOpen;
+  final aiHint = aiOpen ? signInForAi : aiIsPro;
   final bank = context.read<BankProvider>();
 
-  var topics = {...initialTopics};
+  // Topics the plan does not open cannot be practised.
+  final open = bank.topics.where(bank.isOpen).map((t) => t.id).toSet();
+  var topics = initialTopics.intersection(open);
   var count = 10;
   var customCount = false; // true once "Custom" is picked
   var source = PracticeSource.bank;
@@ -173,7 +180,7 @@ Future<void> showPracticeSetup(
                             padding: const EdgeInsets.only(top: 6),
                             child: Text(
                               !hasKey
-                                  ? signInForAi
+                                  ? aiHint
                                   : switch (source) {
                                       PracticeSource.bank =>
                                         'Saved questions. Works offline. '
@@ -201,7 +208,7 @@ Future<void> showPracticeSetup(
                             subtitle: Text(
                               hasKey
                                   ? 'Explains where your answer went wrong.'
-                                  : '$signInForAi You still get the saved '
+                                  : '$aiHint You still get the saved '
                                         'explanations.',
                             ),
                             value: tutor && hasKey,

@@ -28,8 +28,11 @@ import 'package:sqflite/sqflite.dart';
 
 import '../data/alarm_log.dart';
 import '../data/app_database.dart';
+import '../data/flag_store.dart';
 import '../data/question_repository.dart';
 import 'account.dart';
+import 'entitlements.dart';
+import 'profile_picture.dart';
 import 'question_service.dart';
 import 'server_config.dart';
 import 'system_bridge.dart';
@@ -54,7 +57,7 @@ class SyncService {
 
   static const String _statusPref = 'sync_status';
   static const String _backupPref = 'sync_backup_hash';
-  static const String _bankPlanKey = 'bank_plan';
+  static const String _bankLevelKey = 'bank_level';
   static const String _bankFullKey = 'bank_full_at';
   static const String _ownerKey = 'data_owner';
   static const String _deletedKey = QuestionRepository.deletedOwnQuestionsKey;
@@ -115,8 +118,9 @@ class SyncService {
       final db = await AppDatabase.instance;
       final signedIn = Account.instance.isSignedIn;
       // Signed out on a phone that holds an account's data: the sign-in
-      // screen is showing. Leave everything exactly as it is (a download
-      // without the account would throw away its premium units).
+      // person is a guest for now. Leave everything exactly as it is (a
+      // download without the account would throw away the questions it
+      // had; what a guest may open is decided on the phone meanwhile).
       if (!signedIn && await _meta(db, _ownerKey) != null) return;
 
       if (signedIn && await _adoptOwner()) QuestionService.changes.value++;
@@ -133,6 +137,10 @@ class SyncService {
           // answers can only be kept for questions the phone has.
           if (bankOk && await _restoreOnce()) QuestionService.changes.value++;
           await _upload();
+          // Questions flagged for review (never throws).
+          await FlagStore.upload();
+          // The profile picture (never throws).
+          await ProfilePicture.sync();
         } catch (e) {
           problems.add('your progress: ${_short(e)}');
         }
@@ -331,13 +339,18 @@ class SyncService {
 
   /// Brings the local question bank in line with the server. Returns true
   /// if anything changed. Normally only asks for what changed since the
-  /// last time; every few days, on the first run and when the user's plan
-  /// changes, it compares everything.
+  /// last time; every few days, on the first run and when what the person
+  /// may see changes (sign in, a new plan, a plan that ran out), it
+  /// compares everything.
+  ///
+  /// The server sends every topic, each with who may open it ("access"),
+  /// but only the questions this account may see. A topic that arrives
+  /// without questions therefore stays on the phone as a locked title.
   static Future<bool> _syncBank({required bool full}) async {
     final db = await AppDatabase.instance;
     final token = await Account.instance.accessToken();
     // Signed in but the sign-in could not be confirmed right now: do not
-    // download as a stranger, that would drop the account's premium units.
+    // download as a stranger, that would drop the account's questions.
     if (token == null && Account.instance.isSignedIn) {
       throw const _SyncError('no connection');
     }
@@ -360,14 +373,34 @@ class SyncService {
         premium = ends == null || ends.isAfter(DateTime.now());
       }
     }
-    final plan = premium ? 'premium' : 'free';
+    // What the server lets this phone see: 'guest', 'free' or 'paid'.
+    final level = token == null
+        ? TopicAccess.guest
+        : premium
+        ? TopicAccess.paid
+        : TopicAccess.free;
 
     final since = await _meta(db, QuestionRepository.bankSyncedKey);
+    final levelBefore = await _meta(db, _bankLevelKey);
+    final levelChanged = levelBefore != level;
+    final restoredKey = 'restored:${Account.instance.userId}';
+    if (levelChanged && token != null && await _meta(db, restoredKey) != null) {
+      // Questions may be about to leave the phone, and answers go with
+      // them. Send what is not on the server yet first, and fetch the
+      // history again afterwards (answers come back when their questions
+      // do, e.g. after renewing a plan).
+      try {
+        await _upload();
+        await db.delete('meta', where: 'key = ?', whereArgs: [restoredKey]);
+      } catch (e) {
+        debugPrint('Could not send progress before the bank changed: $e');
+      }
+    }
     final lastFull = DateTime.tryParse(await _meta(db, _bankFullKey) ?? '');
     full =
         full ||
         since == null ||
-        await _meta(db, _bankPlanKey) != plan ||
+        levelChanged ||
         lastFull == null ||
         DateTime.now().difference(lastFull) > _fullEvery;
 
@@ -418,8 +451,8 @@ class SyncService {
     final folder = kIsWeb ? null : await pictureFolder();
     var changed = false;
     // A unit or topic that is live on the server but new to this phone
-    // (restored by an admin, or no longer premium): its questions did not
-    // change, so only a full comparison brings them.
+    // (restored by an admin): its questions did not change, so only a
+    // full comparison brings them.
     var needFull = false;
     final pictures = <String, String>{}; // question id -> web address
 
@@ -428,7 +461,7 @@ class SyncService {
       for (final u in units) {
         final id = u['id'] as String;
         if (id == QuestionRepository.customUnitId) continue;
-        if (u['deleted_at'] != null || (u['premium'] == true && !premium)) {
+        if (u['deleted_at'] != null) {
           changed |= await _retireUnit(txn, id);
           continue;
         }
@@ -453,18 +486,23 @@ class SyncService {
           changed |= await _retireTopic(txn, id);
           continue;
         }
-        needFull |= (await txn.query(
+        final access = QuestionRepository.cleanAccess(t['access']);
+        final had = await txn.query(
           'topics',
           where: 'id = ? AND is_custom = 0',
           whereArgs: [id],
-        )).isEmpty;
+        );
+        needFull |= had.isEmpty;
+        // A topic that opened or locked shows differently straight away.
+        changed |= had.isEmpty || had.first['access'] != access;
         liveTopics.add(id);
         await txn.rawInsert(
-          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom) '
-          'VALUES(?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET '
+          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom, access) '
+          'VALUES(?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET '
           'unit_id = excluded.unit_id, name = excluded.name, '
-          'sort_order = excluded.sort_order, is_custom = 0',
-          [id, t['unit_id'], t['name'], t['sort_order'] ?? 0],
+          'sort_order = excluded.sort_order, is_custom = 0, '
+          'access = excluded.access',
+          [id, t['unit_id'], t['name'], t['sort_order'] ?? 0, access],
         );
       }
 
@@ -547,7 +585,7 @@ class SyncService {
         }
         await _setMeta(txn, _bankFullKey, startedAt.toIso8601String());
       }
-      await _setMeta(txn, _bankPlanKey, plan);
+      await _setMeta(txn, _bankLevelKey, level);
       await _setMeta(
         txn,
         QuestionRepository.bankSyncedKey,
@@ -686,6 +724,7 @@ class SyncService {
     await txn.delete('attempts');
     await txn.delete('sessions');
     await txn.delete('alarm_events');
+    await txn.delete('question_flags');
     await txn.delete('questions', where: "source IN ('ai', 'user')");
     await txn.rawDelete(
       'DELETE FROM topics WHERE is_custom = 1 AND id NOT IN '
@@ -861,6 +900,7 @@ class SyncService {
                   'dismissed',
                   'snoozed',
                   'finished',
+                  'timed_out',
                 }.contains(s['outcome'])
                 ? s['outcome']
                 : null,

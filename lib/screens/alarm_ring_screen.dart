@@ -3,6 +3,9 @@
 /// the snooze (length chosen per alarm).
 /// Questions come from the local database only, so it works offline.
 /// Every ring is saved as a session for the Reports tab.
+/// A ring nobody answers stops by itself (the limits are AlarmProvider's);
+/// this screen tells the provider about every sign of life and closes
+/// when the provider gives up.
 library;
 
 import 'dart:async';
@@ -16,6 +19,8 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/alarm_provider.dart';
 import '../services/question_service.dart';
+import '../services/sound_prefs.dart';
+import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
@@ -32,6 +37,10 @@ class AlarmRingScreen extends StatefulWidget {
 
   const AlarmRingScreen({super.key, required this.alarm, this.preview = false});
 
+  /// Told the name of each right/wrong sound as it is played (tests only).
+  @visibleForTesting
+  static void Function(String name)? debugOnSfx;
+
   @override
   State<AlarmRingScreen> createState() => _AlarmRingScreenState();
 }
@@ -47,6 +56,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   _Phase _phase = _Phase.loading;
   Question? _currentQuestion;
   String _lastAnswer = '';
+
+  /// One line under the verdict: the right spelling when a typo was
+  /// forgiven, or the part of the answer that was missing.
+  String? _hint;
   final Set<String> _shown = {};
   final Stopwatch _questionTimer = Stopwatch();
   Future<int?>? _session;
@@ -63,6 +76,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   @override
   void initState() {
     super.initState();
+    // Keeps the screen awake while answering (also in power saving mode)
+    // and lets the quiz show over the lock screen, only while ringing.
+    if (!widget.preview) SystemBridge.setAlarmScreen(true);
+    SoundPrefs.load().catchError((_) => false);
     _sfxPlayer
         .setAudioContext(
           AudioContext(
@@ -80,8 +97,57 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         alarmId: widget.alarm.id,
         requiredStreak: _needed,
       );
+      _provider = Provider.of<AlarmProvider>(context, listen: false);
+      _timeouts = _provider!.ringTimeouts
+          .where((id) => id == widget.alarm.id)
+          .listen((_) => _timedOut());
+    } else {
+      _previewTimer = Timer(AlarmProvider.untouchedRingLimit, _timedOut);
     }
     _loadNextQuestion();
+  }
+
+  AlarmProvider? _provider;
+  StreamSubscription<int>? _timeouts;
+
+  /// A test screen is not known to the provider: it keeps the same two
+  /// limits itself and simply closes.
+  Timer? _previewTimer;
+  bool _previewStarted = false;
+
+  /// A sign of life. With [attempt] the questions count as started.
+  void _active({bool attempt = true, bool answered = false}) {
+    if (_closing) return;
+    if (widget.preview) {
+      if (!attempt && !_previewStarted) return;
+      _previewStarted = true;
+      _previewTimer?.cancel();
+      _previewTimer = Timer(AlarmProvider.idleRingLimit, _timedOut);
+      return;
+    }
+    _provider?.noteRingActivity(
+      widget.alarm.id,
+      attempt: attempt,
+      answered: answered,
+    );
+  }
+
+  /// Nobody answered in time and the alarm has stopped by itself: close
+  /// without a greeting, a review or a sound.
+  void _timedOut() {
+    if (_closing || !mounted) return;
+    _closing = true;
+    if (!widget.preview) {
+      final session = _session;
+      unawaited(() async {
+        try {
+          await QuestionRepository.endSession(await session, 'timed_out');
+        } catch (_) {}
+        QuestionService.changes.value++;
+      }());
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    Navigator.of(context).pop(widget.preview ? null : 'timed_out');
   }
 
   bool _blockVolumeKeys(KeyEvent event) {
@@ -93,14 +159,21 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
 
   @override
   void dispose() {
+    if (!widget.preview) SystemBridge.setAlarmScreen(false);
     HardwareKeyboard.instance.removeHandler(_blockVolumeKeys);
+    _timeouts?.cancel();
+    _previewTimer?.cancel();
     _saqController.dispose();
     _sfxPlayer.dispose();
     _shakeController.close();
     super.dispose();
   }
 
+  /// The short right/wrong sound, unless muted in Settings. (The alarm
+  /// itself is played elsewhere and is never muted by that switch.)
   void _sfx(String name) {
+    if (SoundPrefs.muteAnswerSounds) return;
+    AlarmRingScreen.debugOnSfx?.call(name);
     _sfxPlayer.play(AssetSource('sounds/$name.mp3')).catchError((_) {});
   }
 
@@ -206,6 +279,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   Future<void> _submitAnswer(String answer) async {
     final q = _currentQuestion;
     if (q == null || _phase != _Phase.asking || answer.trim().isEmpty) return;
+    if (_closing) return;
+    _active(answered: true);
     _questionTimer.stop();
     final taken = _questionTimer.elapsed;
     FocusScope.of(context).unfocus();
@@ -214,7 +289,9 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       _lastAnswer = answer.trim();
     });
 
-    final isCorrect = await QuestionService.gradeAnswer(q, answer);
+    final grade = await QuestionService.grade(q, answer);
+    final isCorrect = grade.correct;
+    _hint = grade.hint;
     final session = await _session;
     unawaited(
       QuestionRepository.recordAttempt(
@@ -226,7 +303,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         timeTaken: taken,
       ),
     );
-    if (!mounted) return;
+    if (!mounted || _closing) return; // it stopped by itself meanwhile
     _results.add(PracticeResult(q, answer.trim(), isCorrect));
 
     if (isCorrect) {
@@ -262,55 +339,63 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       data: AppTheme.dark(Theme.of(context).colorScheme.primary),
       child: PopScope(
         canPop: widget.preview,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 300),
-          color: _backgroundColor,
-          child: Scaffold(
-            backgroundColor: Colors.transparent,
-            body: SafeArea(
-              child: ShakeWidget(
-                shakeStream: _shakeController.stream,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _header(),
-                      Expanded(
-                        child: Center(
-                          child: SingleChildScrollView(
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 220),
-                              child: KeyedSubtree(
-                                key: ValueKey(
-                                  '${_phase.name}-${_currentQuestion?.id}',
-                                ),
-                                child: _body(),
-                              ),
+        // Any touch shows someone is there (once the questions were begun).
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: (_) => _active(attempt: false),
+          child: _screen(),
+        ),
+      ),
+    );
+  }
+
+  Widget _screen() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      color: _backgroundColor,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          child: ShakeWidget(
+            shakeStream: _shakeController.stream,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _header(),
+                  Expanded(
+                    child: Center(
+                      child: SingleChildScrollView(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          child: KeyedSubtree(
+                            key: ValueKey(
+                              '${_phase.name}-${_currentQuestion?.id}',
                             ),
+                            child: _body(),
                           ),
                         ),
                       ),
-                      // Filled, so it is easy to find half asleep. Gone once
-                      // the alarm is snoozed or off (the "done" view).
-                      if (_wrongStreak >= _wrongForSnooze &&
-                          _phase != _Phase.done)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: FilledButton.tonalIcon(
-                            style: FilledButton.styleFrom(
-                              minimumSize: const Size.fromHeight(52),
-                            ),
-                            onPressed: () => _finish('snooze'),
-                            icon: const Icon(Icons.snooze),
-                            label: Text(
-                              'Snooze (${widget.alarm.snoozeMinutes} minutes)',
-                            ),
-                          ),
-                        ),
-                    ],
+                    ),
                   ),
-                ),
+                  // Filled, so it is easy to find half asleep. Gone once
+                  // the alarm is snoozed or off (the "done" view).
+                  if (_wrongStreak >= _wrongForSnooze && _phase != _Phase.done)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                        ),
+                        onPressed: () => _finish('snooze'),
+                        icon: const Icon(Icons.snooze),
+                        label: Text(
+                          'Snooze (${widget.alarm.snoozeMinutes} minutes)',
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -469,6 +554,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         '${_needed - _correctStreak} more to go',
         style: const TextStyle(color: Colors.white70, fontSize: 16),
       ),
+      if (_hint != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          _hint!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white54, fontSize: 14),
+        ),
+      ],
     ],
   );
 
@@ -659,6 +752,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             color: AppColors.success,
             icon: Icons.check,
           ),
+          if (_hint != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                _hint!,
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+            ),
           if (q.explanation.trim().isNotEmpty) ...[
             const Text(
               'WHY',
@@ -757,6 +858,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
           controller: _saqController,
           autofocus: true,
           decoration: const InputDecoration(hintText: 'Type answer...'),
+          onChanged: (_) => _active(),
           onSubmitted: _submitAnswer,
         ),
         const SizedBox(height: 12),

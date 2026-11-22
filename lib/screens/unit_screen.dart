@@ -5,9 +5,12 @@ library;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/bank_provider.dart';
+import '../services/question_service.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import 'practice_setup.dart';
 import 'tabs/question_bank_tab.dart' show showAddTopicDialog;
 import 'topic_screen.dart';
@@ -155,7 +158,10 @@ class UnitScreen extends StatelessWidget {
                           ? null
                           : () => showPracticeSetup(
                               context,
-                              initialTopics: topics.map((t) => t.id).toSet(),
+                              initialTopics: {
+                                for (final t in topics)
+                                  if (bank.isOpen(t)) t.id,
+                              },
                               title: unit.name,
                             ),
                       style: FilledButton.styleFrom(
@@ -230,22 +236,34 @@ class TopicCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // A topic the plan does not open: its title with a lock, nothing more.
+    final locked = !context.watch<BankProvider>().isOpen(topic);
+    final faded = theme.colorScheme.onSurface.withValues(alpha: 0.45);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
-          ),
+          onTap: () => locked
+              ? showTopicLockedSheet(context, topic)
+              : Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
+                ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
             child: Row(
               children: [
-                ProgressRing(
-                  value: stats.total == 0 ? 0 : stats.mastered / stats.total,
-                ),
+                if (locked)
+                  SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: Icon(Icons.lock_rounded, color: faded),
+                  )
+                else
+                  ProgressRing(
+                    value: stats.total == 0 ? 0 : stats.mastered / stats.total,
+                  ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -253,10 +271,19 @@ class TopicCard extends StatelessWidget {
                     children: [
                       if (unitName != null)
                         Text(unitName!, style: theme.textTheme.labelSmall),
-                      Text(topic.name, style: theme.textTheme.titleMedium),
+                      Text(
+                        topic.name,
+                        style: locked
+                            ? theme.textTheme.titleMedium?.copyWith(
+                                color: faded,
+                              )
+                            : theme.textTheme.titleMedium,
+                      ),
                       const SizedBox(height: 3),
                       Text(
-                        stats.total == 0
+                        locked
+                            ? 'Locked'
+                            : stats.total == 0
                             ? 'No questions yet'
                             : '${plural(stats.total, 'question')} \u00b7 '
                                   '${stats.seen} answered \u00b7 '
@@ -266,10 +293,19 @@ class TopicCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+                // A topic the user made can be deleted right from the list.
+                if (topic.isCustom)
+                  IconButton(
+                    tooltip: 'Delete topic',
+                    icon: const Icon(Icons.delete_outline),
+                    color: theme.colorScheme.onSurfaceVariant,
+                    onPressed: () => confirmDeleteTopic(context, topic),
+                  )
+                else
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
               ],
             ),
           ),
@@ -277,4 +313,33 @@ class TopicCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Asks, then deletes a topic the user made together with its questions.
+/// Returns true if it was deleted.
+Future<bool> confirmDeleteTopic(BuildContext context, Topic topic) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Delete "${topic.name}"?'),
+      content: const Text(
+        'The topic, its questions and your answers to them will be removed. '
+        'This cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return false;
+  await QuestionRepository.deleteCustomTopic(topic.id);
+  QuestionService.changes.value++;
+  return true;
 }

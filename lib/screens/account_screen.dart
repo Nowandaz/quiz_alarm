@@ -1,18 +1,28 @@
 /// The sign-in screen: create an account or sign in, with email and
-/// password or with Google. An account is required, so this screen cannot
-/// be dismissed; it closes by itself once the user is signed in.
+/// password or with Google. It closes by itself once the user is signed
+/// in.
+///
+/// As the welcome screen (the first thing a new user sees) it cannot be
+/// dismissed, but offers "Continue without an account". Opened later
+/// (from Settings, or from a "create an account" prompt) it has a back
+/// button instead.
 library;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../services/account.dart';
+import '../services/guest_mode.dart';
+import '../services/server_config.dart';
 import '../services/system_bridge.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/brand.dart';
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key});
+  /// True for the welcome screen shown when the app opens.
+  final bool welcome;
+  const AccountScreen({super.key, this.welcome = false});
   @override
   State<AccountScreen> createState() => _AccountScreenState();
 }
@@ -24,6 +34,9 @@ class _AccountScreenState extends State<AccountScreen> {
   bool _creating = true;
   bool _busy = false;
   bool _showPassword = false;
+
+  /// The "I agree to the Terms..." box on the Create account tab.
+  bool _agreed = false;
   String? _error;
   String? _notice;
 
@@ -65,6 +78,13 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  /// "Continue without an account": remembered, so the app opens
+  /// normally from now on.
+  Future<void> _continueAsGuest() async {
+    await GuestMode.choose();
+    if (mounted) Navigator.pop(context);
+  }
+
   void _onGoogleResult() {
     if (!mounted) return;
     setState(() {
@@ -81,7 +101,19 @@ class _AccountScreenState extends State<AccountScreen> {
     });
   }
 
+  /// Creating an account (by email or with Google) needs the terms box
+  /// ticked. False, with the reason shown, when it is not.
+  bool _termsOk() {
+    if (!_creating || _agreed) return true;
+    setState(() {
+      _error = 'Please agree to the terms to create an account.';
+      _notice = null;
+    });
+    return false;
+  }
+
   Future<void> _google() async {
+    if (!_termsOk()) return;
     setState(() {
       _error = null;
       _notice = null;
@@ -169,6 +201,7 @@ class _AccountScreenState extends State<AccountScreen> {
       setState(() => _error = 'The password needs at least 6 characters.');
       return;
     }
+    if (!_termsOk()) return;
     FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
@@ -206,12 +239,24 @@ class _AccountScreenState extends State<AccountScreen> {
     final muted = scheme.onSurface.withValues(alpha: 0.62);
 
     return PopScope(
-      canPop: false, // an account is required
+      // The welcome screen is left by signing in or by choosing to go on
+      // without an account, not with the back button.
+      canPop: !widget.welcome,
       child: Scaffold(
         body: AppBackground(
           child: Stack(
             children: [
               const Positioned.fill(child: BrandDial()),
+              if (!widget.welcome)
+                const SafeArea(
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: EdgeInsets.all(4),
+                      child: BackButton(),
+                    ),
+                  ),
+                ),
               SafeArea(
                 child: Center(
                   child: SingleChildScrollView(
@@ -279,25 +324,6 @@ class _AccountScreenState extends State<AccountScreen> {
                               height: 1.4,
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          const Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              Pill(
-                                'Answer to dismiss',
-                                icon: Icons.quiz_rounded,
-                              ),
-                              Pill(
-                                'AI tutor',
-                                icon: Icons.auto_awesome_rounded,
-                              ),
-                              Pill(
-                                'Track progress',
-                                icon: Icons.insights_rounded,
-                              ),
-                            ],
-                          ),
                           const SizedBox(height: 22),
 
                           GlossCard(
@@ -363,6 +389,30 @@ class _AccountScreenState extends State<AccountScreen> {
                                     ),
                                   ),
                                 ),
+                                if (_creating && !_recovering) ...[
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Checkbox(
+                                        value: _agreed,
+                                        onChanged: _busy
+                                            ? null
+                                            : (v) => setState(() {
+                                                _agreed = v ?? false;
+                                                if (_agreed) _error = null;
+                                              }),
+                                      ),
+                                      const Expanded(
+                                        child: _TermsText(
+                                          before: 'I agree to the ',
+                                          between: ' and the ',
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                                 if (!_creating && !_recovering)
                                   Align(
                                     alignment: Alignment.centerRight,
@@ -458,6 +508,30 @@ class _AccountScreenState extends State<AccountScreen> {
                                 ),
                               ),
                             ),
+                            if (!_creating) ...[
+                              const SizedBox(height: 10),
+                              _TermsText(
+                                before: 'By continuing you agree to the ',
+                                between: ' and ',
+                                small: true,
+                                color: muted,
+                              ),
+                            ],
+                          ],
+                          if (widget.welcome && !_recovering) ...[
+                            const SizedBox(height: 14),
+                            TextButton(
+                              onPressed: _busy ? null : _continueAsGuest,
+                              child: const Text('Continue without an account'),
+                            ),
+                            Text(
+                              '3 alarms and two starter topics. You can '
+                              'create an account any time.',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: muted,
+                              ),
+                            ),
                           ],
                           const SizedBox(height: 22),
                           Text(
@@ -533,6 +607,70 @@ class _ModeSwitch extends StatelessWidget {
       child: Row(
         children: [side('Create account', true), side('Sign in', false)],
       ),
+    );
+  }
+}
+
+/// A sentence naming the Terms and Conditions and the Privacy Policy,
+/// each a link that opens the page in the browser.
+class _TermsText extends StatefulWidget {
+  final String before;
+  final String between;
+  final bool small;
+  final Color? color;
+  const _TermsText({
+    required this.before,
+    required this.between,
+    this.small = false,
+    this.color,
+  });
+
+  @override
+  State<_TermsText> createState() => _TermsTextState();
+}
+
+class _TermsTextState extends State<_TermsText> {
+  final _terms = TapGestureRecognizer()
+    ..onTap = () => SystemBridge.openUrl(ServerConfig.termsUrl);
+  final _privacy = TapGestureRecognizer()
+    ..onTap = () => SystemBridge.openUrl(ServerConfig.privacyUrl);
+
+  @override
+  void dispose() {
+    _terms.dispose();
+    _privacy.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final link = TextStyle(
+      color: theme.colorScheme.primary,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: theme.colorScheme.primary,
+    );
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: widget.before),
+          TextSpan(
+            text: 'Terms and Conditions',
+            style: link,
+            recognizer: _terms,
+          ),
+          TextSpan(text: widget.between),
+          TextSpan(text: 'Privacy Policy', style: link, recognizer: _privacy),
+          const TextSpan(text: '.'),
+        ],
+      ),
+      textAlign: widget.small ? TextAlign.center : TextAlign.start,
+      style:
+          (widget.small
+                  ? theme.textTheme.bodySmall
+                  : theme.textTheme.bodyMedium)
+              ?.copyWith(color: widget.color, height: 1.35),
     );
   }
 }

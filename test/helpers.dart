@@ -12,11 +12,24 @@ import 'package:quiz_alarm/data/app_database.dart';
 import 'package:quiz_alarm/data/question_repository.dart';
 import 'package:quiz_alarm/services/account.dart';
 import 'package:quiz_alarm/services/ai_client.dart';
+import 'package:quiz_alarm/services/entitlements.dart';
+import 'package:quiz_alarm/services/profile_picture.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+/// Opens every feature, as on a paid plan, whatever the sign-in state.
+/// [resetApp] calls it, so tests see everything open unless they pick a
+/// level themselves with `Entitlements.instance.setForTest(...)`
+/// (null = work it out from the account and the saved plan).
+void openAllFeatures() {
+  Entitlements.instance
+    ..resetForTest()
+    ..setForTest(PlanLevel.pro);
+}
+
 /// Call from setUp(). Gives every test a fresh, empty world.
 /// [signedIn] puts the app in a signed-in state (AI features need it).
+/// Every feature is open ([openAllFeatures]).
 Future<void> resetApp({
   Map<String, Object> prefs = const {},
   bool signedIn = false,
@@ -31,6 +44,10 @@ Future<void> resetApp({
   FlutterSecureStorage.setMockInitialValues({});
   Account.instance.resetForTest();
   if (signedIn) Account.instance.signInForTest();
+  // No profile picture on the (fake) server unless a test puts one there.
+  ProfilePicture.resetForTest();
+  ProfilePicture.httpClient = MockClient((_) async => http.Response('', 404));
+  openAllFeatures();
 }
 
 /// Makes every call to the AI server answer with [reply] (given the

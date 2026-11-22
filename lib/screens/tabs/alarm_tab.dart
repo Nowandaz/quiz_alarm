@@ -15,6 +15,7 @@ import '../../widgets/alarm_health.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/coach_tour.dart';
 import '../../widgets/clock_display.dart';
+import '../../widgets/lock_prompt.dart';
 import '../alarm_ring_screen.dart';
 import '../edit_alarm_screen.dart';
 
@@ -116,6 +117,11 @@ class _AlarmTabState extends State<AlarmTab> {
   }
 
   void _openEditor(BuildContext context, [AlarmItem? alarm]) {
+    // A new alarm at the plan's limit: say why not, and what lifts it.
+    if (alarm == null && !context.read<AlarmProvider>().canAddAlarm) {
+      showAlarmLimitSheet(context);
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -200,17 +206,10 @@ class _AlarmTabState extends State<AlarmTab> {
                             const SizedBox(height: 16),
                             _NextAlarmLine(
                               text: next != null
-                                  // Which ring is next, then how long
-                                  // until it.
-                                  ? 'Next: '
-                                        '${DateFormat('EEE').format(next.$2)} '
-                                        '${formatClock(next.$2, use24Hour: use24)}'
-                                        ' \u00b7 '
+                                  // Only how long until the next ring.
+                                  ? 'Next alarm '
                                         '${describeTimeUntil(next.$2, now)}'
-                                  : provider.alarms.isEmpty
-                                  ? 'No alarms yet'
-                                  : 'No alarm is on. Add an alarm to start '
-                                        'your morning quiz.',
+                                  : 'No alarm is on',
                               on: next != null,
                               // With alarms that are all off, the line is
                               // the way to a new one. With none at all the

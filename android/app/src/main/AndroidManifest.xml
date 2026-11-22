@@ -19,13 +19,14 @@
         android:label="BrainWake"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Not marked showWhenLocked here on purpose: the app must stay
+             behind the lock screen. MainActivity switches that on in code
+             only while an alarm is ringing. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
-            android:showWhenLocked="true"
-            android:turnScreenOn="true"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -75,6 +76,19 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
                 <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
+        <!-- The optional "cannot be uninstalled while an alarm rings"
+             switch (see AdminReceiver.kt). Off until the user turns it on. -->
+        <receiver
+            android:name=".AdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin"/>
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED"/>
             </intent-filter>
         </receiver>
         <!-- Shows the "alarm may not ring" notice if the app is force-closed

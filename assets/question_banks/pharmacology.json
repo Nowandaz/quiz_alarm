@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "unit": {
     "id": "pharmacology",
     "name": "Pharmacology",
@@ -10,6 +10,7 @@
     {
       "id": "pharm-general-principles",
       "name": "General principles",
+      "access": "guest",
       "questions": [
         {
           "id": "pharm-gp-001",
@@ -145,6 +146,7 @@
     {
       "id": "pharm-autonomic",
       "name": "Autonomic nervous system",
+      "access": "free",
       "questions": [
         {
           "id": "pharm-ans-001",
@@ -277,6 +279,7 @@
     {
       "id": "pharm-cardiovascular",
       "name": "Cardiovascular drugs",
+      "access": "guest",
       "questions": [
         {
           "id": "pharm-cvs-001",
@@ -539,6 +542,7 @@
     {
       "id": "pharm-antimicrobials",
       "name": "Antimicrobials",
+      "access": "free",
       "questions": [
         {
           "id": "pharm-abx-001",

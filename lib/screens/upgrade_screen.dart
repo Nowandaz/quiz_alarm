@@ -2,7 +2,8 @@
 /// month or the year), a discount code, and paying. M-Pesa is paid without
 /// leaving the app: the phone gets a prompt and this screen keeps asking
 /// the server until it went through. A card is paid on Paystack's own page,
-/// shown inside the app.
+/// shown inside the app. Someone without an account is asked to create
+/// one first: a plan belongs to an account.
 library;
 
 import 'dart:async';
@@ -10,9 +11,12 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../services/account.dart';
 import '../services/billing.dart';
+import '../services/entitlements.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import 'card_pay_page.dart';
 
 /// Opens the plans screen. Finishes when the user comes back from it.
@@ -124,9 +128,21 @@ class _UpgradeScreenState extends State<UpgradeScreen>
   }
 
   Future<void> _load() async {
+    // Plans are read for an account; a guest is shown "create one" instead.
+    if (!Account.instance.isSignedIn) return;
     setState(() => _loadError = null);
     try {
       final offer = await Billing.plans();
+      // What the server just said is the plan: the rest of the app
+      // follows at once.
+      unawaited(
+        Entitlements.instance.apply(
+          premium: offer.premium,
+          tier: offer.tier,
+          tierName: offer.tierName,
+          expires: offer.expires,
+        ),
+      );
       if (!mounted) return;
       setState(() {
         _offer = offer;
@@ -371,6 +387,15 @@ class _UpgradeScreenState extends State<UpgradeScreen>
     _busy = false;
     _paid = status;
     _reference = null;
+    // Unlocks the paid features straight away, without a restart.
+    unawaited(
+      Entitlements.instance.apply(
+        premium: status.premium,
+        tier: status.tier,
+        tierName: status.tierName,
+        expires: status.expires,
+      ),
+    );
     // The plan line at the top follows the new plan.
     _offer = Billing.last ?? _offer;
     _say(null);
@@ -456,7 +481,14 @@ class _UpgradeScreenState extends State<UpgradeScreen>
       appBar: AppBar(title: const Text('Plans')),
       body: AppBackground(
         child: SafeArea(
-          child: offer == null
+          child: !Account.instance.isSignedIn
+              ? _AccountFirst(
+                  onSignIn: () async {
+                    await openSignIn(context);
+                    if (mounted) _load();
+                  },
+                )
+              : offer == null
               ? _loadError == null
                     ? const Center(child: CircularProgressIndicator())
                     : _LoadFailed(message: _loadError!, onRetry: _load)
@@ -507,6 +539,14 @@ class _UpgradeScreenState extends State<UpgradeScreen>
               color: scheme.onSurface.withValues(alpha: 0.62),
             ),
           ),
+          // A paid plan the phone could not confirm for a while.
+          if (Entitlements.instance.needsCheck) ...[
+            const SizedBox(height: 8),
+            Text(
+              Entitlements.instance.unlockHint,
+              style: theme.textTheme.bodyMedium?.copyWith(color: scheme.error),
+            ),
+          ],
         ],
       ),
     );
@@ -1103,6 +1143,47 @@ class _Note extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
       ),
       child: Text(text, style: TextStyle(color: color, height: 1.35)),
+    );
+  }
+}
+
+/// Shown to someone without an account: a plan needs one.
+class _AccountFirst extends StatelessWidget {
+  final VoidCallback onSignIn;
+  const _AccountFirst({required this.onSignIn});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.person_add_alt_1_rounded,
+              size: 36,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Create an account first',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleLarge,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'A plan belongs to your account, so it follows you to a new '
+              'phone. Creating one is free.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyLarge,
+            ),
+            const SizedBox(height: 16),
+            PrimaryButton(label: 'Create account', onPressed: onSignIn),
+          ],
+        ),
+      ),
     );
   }
 }

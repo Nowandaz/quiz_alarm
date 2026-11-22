@@ -13,8 +13,11 @@ import 'data/alarm_log.dart';
 import 'data/question_repository.dart';
 import 'services/bank_provider.dart';
 import 'services/billing.dart';
+import 'services/entitlements.dart';
+import 'services/profile_picture.dart';
 import 'services/sync_service.dart';
 import 'services/theme_provider.dart';
+import 'services/usage_ping.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -27,6 +30,25 @@ Future<void> main() async {
   }
 
   await Account.instance.load();
+  // What the plan opens. Read from the phone first (works offline), then
+  // confirmed with the server in the background.
+  final plan = Entitlements.instance;
+  await plan.load();
+  plan.refresh();
+
+  // The profile picture of whoever is signed in: this phone's copy at
+  // once, then brought in line with the account's copy on the server.
+  Future<void> picture() async {
+    await ProfilePicture.load();
+    await ProfilePicture.sync();
+  }
+
+  await ProfilePicture.load();
+  ProfilePicture.sync();
+  Account.instance.addListener(picture);
+
+  // The anonymous "this phone uses the app" note (once a day at most).
+  UsagePing.send();
 
   // Syncing with the server: at start, shortly after anything of the
   // user's changes, and when they sign in or out.
@@ -39,12 +61,22 @@ Future<void> main() async {
   SyncService.loadStatus();
   // A confirmed payment: fetch the whole bank so premium units arrive.
   Billing.onPaid = () => SyncService.run(fullBank: true);
+  // The plan changed (bought, ran out, signed in or out): the server now
+  // lets this phone see other questions, so the bank is fetched again.
+  var level = plan.level;
+  plan.addListener(() {
+    if (plan.level == level) return;
+    level = plan.level;
+    SyncService.schedule(const Duration(seconds: 1));
+    UsagePing.send();
+  });
   SyncService.schedule(const Duration(seconds: 3));
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider<Account>.value(value: Account.instance),
+        ChangeNotifierProvider<Entitlements>.value(value: plan),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => BankProvider()),
         ChangeNotifierProvider(create: (_) => AlarmProvider(backend: backend)),

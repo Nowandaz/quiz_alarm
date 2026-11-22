@@ -6,6 +6,7 @@ import 'package:quiz_alarm/data/alarm_log.dart';
 import 'package:quiz_alarm/models/models.dart';
 import 'package:quiz_alarm/services/alarm_backend.dart';
 import 'package:quiz_alarm/services/alarm_provider.dart';
+import 'package:quiz_alarm/services/system_bridge.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'helpers.dart';
@@ -695,5 +696,219 @@ void main() {
     expect(AlarmItem.difficultyName(3), 'Medium');
     expect(AlarmItem.difficultyName(5), 'Hard');
     expect(AlarmItem.difficultyName(12), 'Custom');
+  });
+
+  // ------------------------------------------------------------------
+  // A ring nobody answers stops by itself.
+  // ------------------------------------------------------------------
+  group('unanswered ring', () {
+    late List<String> notices;
+    late DateTime clock;
+    const untouched = Duration(milliseconds: 150);
+    const idle = Duration(milliseconds: 450);
+    Future<void> wait(int ms) =>
+        Future<void>.delayed(Duration(milliseconds: ms));
+
+    setUp(() {
+      notices = [];
+      clock = DateTime(2026, 3, 2, 7, 0);
+      AlarmProvider.showNotice =
+          ({
+            required int id,
+            required String title,
+            required String body,
+          }) async {
+            notices.add('$id|$title|$body');
+            return true;
+          };
+    });
+
+    tearDown(() => AlarmProvider.showNotice = SystemBridge.showNotice);
+
+    Future<AlarmProvider> start(FakeBackend backend) async {
+      final provider = AlarmProvider(
+        backend: backend,
+        untouchedLimit: untouched,
+        idleLimit: idle,
+        clock: () => clock,
+      );
+      await provider.loaded;
+      return provider;
+    }
+
+    test('the real limits are 10 and 15 minutes', () {
+      expect(AlarmProvider.untouchedRingLimit, const Duration(minutes: 10));
+      expect(AlarmProvider.idleRingLimit, const Duration(minutes: 15));
+    });
+
+    test('untouched, it stops after the limit, is noted, announced and '
+        'stays scheduled', () async {
+      await resetApp();
+      final backend = FakeBackend();
+      final provider = await start(backend);
+      final a = alarm(31)..volume = 0.4;
+      await provider.addAlarm(a);
+      final id = slot(31, today);
+      final closed = <int>[];
+      provider.ringTimeouts.listen(closed.add);
+
+      await ring(backend, a, today);
+      await wait(60);
+      expect(backend.ringing, contains(id)); // not yet
+      expect(provider.timedOut, isEmpty);
+
+      clock = clock.add(const Duration(minutes: 10));
+      await wait(200);
+      expect(backend.ringing, isEmpty);
+      expect(backend.stopCalls, contains(id));
+      expect(closed, [31]);
+
+      final record = provider.timedOut.single;
+      expect(record.alarmId, 31);
+      expect(record.rangSeconds, 600);
+      expect(record.started, isFalse);
+      expect(record.volume, 0.4);
+      expect(record.summary, 'It rang for 10 minutes and was not answered.');
+      expect(notices, [
+        '31|Missed alarm|Your 7:00 AM alarm rang for 10 minutes and was '
+            'not answered.',
+      ]);
+
+      final events = await AlarmLog.recent(alarmId: 31);
+      final entry = events.firstWhere((e) => e.type == 'timed_out');
+      expect(entry.detail, {
+        'rang_seconds': 600,
+        'started': false,
+        'volume': 0.4,
+        'answered': 0,
+      });
+      expect(events.map((e) => e.type), isNot(contains('snoozed')));
+      expect(events.map((e) => e.type), isNot(contains('dismissed')));
+      expect(provider.snoozeCount(31), 0);
+
+      // The repeating alarm rings again next week on this day, and
+      // nothing is left as a snooze.
+      expect(a.isEnabled, isTrue);
+      expect(backend.registered[id]!.isAfter(DateTime.now()), isTrue);
+      expect(backend.registered.containsKey(slot(31, 8)), isFalse);
+      expect(backend.registered.length, 7);
+
+      // The record survives the app being closed, until it is handled.
+      final again = await start(
+        FakeBackend()..registered.addAll(backend.registered),
+      );
+      expect(again.timedOut.single.rangSeconds, 600);
+      expect(again.timedOut.single.volume, 0.4);
+      await again.timedOutHandled(again.timedOut.single);
+      expect(again.timedOut, isEmpty);
+      final third = await start(
+        FakeBackend()..registered.addAll(backend.registered),
+      );
+      expect(third.timedOut, isEmpty);
+    });
+
+    test('once the questions are started the idle limit applies, and '
+        'every activity starts it again', () async {
+      await resetApp();
+      final backend = FakeBackend();
+      final provider = await start(backend);
+      final a = alarm(32);
+      await provider.addAlarm(a);
+      await ring(backend, a, today);
+
+      // A stray tap before any attempt changes nothing...
+      provider.noteRingActivity(32, attempt: false);
+      await wait(40);
+      // ...an answer does.
+      provider.noteRingActivity(32, answered: true);
+      await wait(250); // well past the untouched limit
+      expect(backend.ringing, isNotEmpty);
+      provider.noteRingActivity(32, attempt: false); // a tap: idle starts again
+      await wait(300); // more than the idle limit since the answer
+      expect(backend.ringing, isNotEmpty);
+      expect(provider.timedOut, isEmpty);
+
+      clock = clock.add(const Duration(minutes: 24));
+      await wait(300);
+      expect(backend.ringing, isEmpty);
+      final record = provider.timedOut.single;
+      expect(record.started, isTrue);
+      expect(record.rangSeconds, 24 * 60);
+      expect(
+        notices.single,
+        endsWith(
+          'Your 7:00 AM alarm rang for 24 minutes. The questions were not '
+          'finished.',
+        ),
+      );
+      final entry = (await AlarmLog.recent(alarmId: 32))
+          .firstWhere((e) => e.type == 'timed_out');
+      expect(entry.detail['started'], isTrue);
+      expect(entry.detail['answered'], 1);
+    });
+
+    test('a ring-once alarm is finished; a snooze ringing again gets a '
+        'fresh limit and leaves nothing behind', () async {
+      await resetApp();
+      final backend = FakeBackend();
+      final provider = await start(backend);
+      final a = alarm(33, days: const []);
+      await provider.addAlarm(a);
+      await ring(backend, a, 0);
+      await wait(100);
+      await provider.snoozeAlarm(a); // just before the limit
+      expect(provider.snoozeCount(33), 1);
+      await wait(120);
+      expect(provider.timedOut, isEmpty); // a snooze is not a timeout
+
+      await ring(backend, a, 8);
+      await wait(100);
+      expect(backend.ringing, isNotEmpty); // fresh limit
+      await wait(150);
+      expect(backend.ringing, isEmpty);
+      expect(provider.timedOut.single.alarmId, 33);
+      expect(a.isEnabled, isFalse);
+      expect(backend.registered, isEmpty);
+      expect(provider.snoozeCount(33), 0);
+      expect(provider.nextRing(a), isNull);
+    });
+
+    test('an answered alarm never times out', () async {
+      await resetApp();
+      final backend = FakeBackend();
+      final provider = await start(backend);
+      final a = alarm(34);
+      await provider.addAlarm(a);
+      await ring(backend, a, today);
+      await provider.dismissAlarm(a);
+      await wait(250);
+      expect(provider.timedOut, isEmpty);
+      expect(notices, isEmpty);
+    });
+
+    test('a test ring stops quietly and is not recorded', () async {
+      await resetApp();
+      final backend = FakeBackend();
+      final provider = await start(backend);
+      final a = alarm(35, days: const []);
+      await provider.addAlarm(a);
+      final real = backend.registered[slot(35, 0)]!;
+      final closed = <int>[];
+      provider.ringTimeouts.listen(closed.add);
+
+      await provider.ringSoon(a, after: const Duration(milliseconds: 1));
+      await ring(backend, a, 9);
+      await wait(250);
+      expect(backend.ringing, isEmpty);
+      expect(closed, [35]);
+      expect(provider.timedOut, isEmpty);
+      expect(notices, isEmpty);
+      expect(
+        (await AlarmLog.recent(alarmId: 35)).map((e) => e.type),
+        isNot(contains('timed_out')),
+      );
+      expect(a.isEnabled, isTrue);
+      expect(backend.registered[slot(35, 0)], real);
+    });
   });
 }

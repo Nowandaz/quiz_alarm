@@ -10,15 +10,26 @@ import 'package:provider/provider.dart';
 import '../../data/question_repository.dart';
 import '../../models/models.dart';
 import '../../services/bank_provider.dart';
+import '../../services/entitlements.dart';
 import '../../services/sync_service.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/coach_tour.dart';
+import '../../widgets/lock_prompt.dart';
 import '../practice_setup.dart';
 import '../unit_screen.dart';
 import '../topic_screen.dart';
 
-/// Asks for a name and unit, creates the topic and opens it.
+/// Asks for a name and unit, creates the topic and opens it. Topics of
+/// your own need an account: a guest is asked to create one.
 Future<void> showAddTopicDialog(BuildContext context) async {
+  if (Entitlements.instance.isGuest) {
+    return showLockedSheet(
+      context,
+      title: 'Your own topics',
+      guestMessage: 'Create a free account to add topics of your own.',
+      accountIsEnough: true,
+    );
+  }
   final bank = context.read<BankProvider>();
   final nameCtrl = TextEditingController();
   final aboutCtrl = TextEditingController();
@@ -195,7 +206,7 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
           label: 'Practise',
           onPressed: () => showPracticeSetup(
             context,
-            initialTopics: topics.map((t) => t.id).toSet(),
+            initialTopics: bank.openTopics.map((t) => t.id).toSet(),
           ),
         ),
         const SizedBox(height: 6),

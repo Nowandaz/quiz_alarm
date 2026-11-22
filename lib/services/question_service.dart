@@ -4,104 +4,49 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/app_database.dart';
 import '../data/question_repository.dart';
 import '../models/models.dart';
 import 'ai_client.dart';
+import 'answer_grader.dart';
+import 'entitlements.dart';
+
+export 'answer_grader.dart' show GradeResult;
 
 // ---------------------------------------------------------------------------
-// Answer matching (works offline)
+// Answer matching (works offline; the rules are in answer_grader.dart)
 // ---------------------------------------------------------------------------
 
-const Set<String> _stopWords = {
-  'the',
-  'a',
-  'an',
-  'of',
-  'and',
-  'or',
-  'to',
-  'in',
-};
+/// Lowercase, no accents, punctuation as spaces, single spaces.
+String normalizeAnswer(String s) => AnswerGrader.normalizeText(s);
 
-/// Lowercase, drop punctuation, collapse whitespace.
-String normalizeAnswer(String s) => s
-    .toLowerCase()
-    .replaceAll(RegExp(r'[^\p{L}\p{N}\s]', unicode: true), ' ')
-    .replaceAll(RegExp(r'\s+'), ' ')
-    .trim();
+/// True if the typed [user] answer says [correct] (small typos allowed).
+bool answersMatch(String user, String correct) =>
+    AnswerGrader.grade(user, correct).correct;
 
-List<String> _tokens(String s) =>
-    normalizeAnswer(s).split(' ').where((t) => t.isNotEmpty).toList();
-
-int levenshtein(String a, String b) {
-  if (a == b) return 0;
-  if (a.isEmpty) return b.length;
-  if (b.isEmpty) return a.length;
-  var prev = List<int>.generate(b.length + 1, (i) => i);
-  for (var i = 1; i <= a.length; i++) {
-    final cur = List<int>.filled(b.length + 1, 0);
-    cur[0] = i;
-    for (var j = 1; j <= b.length; j++) {
-      final cost = a.codeUnitAt(i - 1) == b.codeUnitAt(j - 1) ? 0 : 1;
-      cur[j] = min(min(cur[j - 1] + 1, prev[j] + 1), prev[j - 1] + cost);
-    }
-    prev = cur;
-  }
-  return prev[b.length];
-}
-
-/// True if [user] contains every meaningful word of [correct]
-/// (small typos allowed on longer words). A fragment of the answer,
-/// such as one letter, never matches.
-bool answersMatch(String user, String correct) {
-  final u = normalizeAnswer(user);
-  final c = normalizeAnswer(correct);
-  if (u.isEmpty || c.isEmpty) return false;
-  if (u == c) return true;
-  if (u.length < 3) return false;
-
-  var need = _tokens(correct).where((t) => !_stopWords.contains(t)).toList();
-  if (need.isEmpty) need = _tokens(correct);
-  final have = _tokens(user);
-
-  for (final t in need) {
-    final allowed = t.length >= 8 ? 2 : (t.length >= 5 ? 1 : 0);
-    final found = have.any(
-      (h) =>
-          h == t ||
-          (allowed > 0 &&
-              (h.length - t.length).abs() <= allowed &&
-              levenshtein(h, t) <= allowed),
-    );
-    if (!found) return false;
-  }
-  return true;
-}
-
-/// Marks [userAnswer] without the network. MCQs need the exact option;
-/// typed answers may match the answer or any accepted alternative.
-bool isLocallyCorrect(Question q, String userAnswer) {
+/// Marks [userAnswer] without the network, with the details (which part
+/// is missing, the right spelling). MCQs need the exact option; typed
+/// answers go through [AnswerGrader].
+GradeResult gradeLocally(Question q, String userAnswer) {
   final user = userAnswer.trim();
-  if (user.isEmpty) return false;
+  if (user.isEmpty) return GradeResult.wrong;
   if (q.type == QuestionType.mcq) {
-    return user.toLowerCase() == q.correctAnswer.trim().toLowerCase();
+    final right = user.toLowerCase() == q.correctAnswer.trim().toLowerCase();
+    return GradeResult(correct: right, exact: right);
   }
-  return [q.correctAnswer, ...q.altAnswers].any((a) => answersMatch(user, a));
+  return AnswerGrader.grade(user, q.correctAnswer, alts: q.altAnswers);
 }
 
-/// True when a typed answer is the stored answer (or an accepted
-/// alternative) word for word, so nobody needs to be asked.
-bool _isExact(Question q, String userAnswer) {
-  final u = normalizeAnswer(userAnswer);
-  return u.isNotEmpty &&
-      [q.correctAnswer, ...q.altAnswers].any((a) => normalizeAnswer(a) == u);
-}
+/// [gradeLocally], as a plain yes or no.
+bool isLocallyCorrect(Question q, String userAnswer) =>
+    gradeLocally(q, userAnswer).correct;
 
 /// What the AI tutor said about one answer.
 class AiFeedback {
@@ -146,39 +91,106 @@ class QuestionService {
 
   // --------------------------------------------------------------- grading
 
-  /// Marks an answer when an alarm is ringing: fast and never blocked by
-  /// the network for long. Typed answers that are not an obvious match are
-  /// shown to the AI (5 s limit) before falling back to local matching.
-  static Future<bool> gradeAnswer(Question q, String userAnswer) async {
-    final user = userAnswer.trim();
-    if (user.isEmpty) return false;
-    if (q.type == QuestionType.mcq || _isExact(q, user)) {
-      return isLocallyCorrect(q, user);
-    }
-    if (normalizeAnswer(user).length < 3) return false;
+  /// Whether the AI may be asked at all: signed in and on a paid plan.
+  static bool get canUseAi =>
+      AiClient.available && Entitlements.instance.canUseAi;
 
-    if (AiClient.available) {
-      try {
-        return await AiClient.grade(
-          question: q.questionText,
-          correctAnswer: q.correctAnswer,
-          userAnswer: user,
-          timeout: const Duration(seconds: 5),
-        );
-      } catch (e) {
-        debugPrint('AI grading failed, using local match: $e');
-      }
+  /// Marks an answer when an alarm is ringing: fast and never blocked by
+  /// the network for long. The phone marks it first. Only when that says
+  /// "wrong" for a typed answer, and the plan includes the AI, is the AI
+  /// asked (5 s limit); for everyone else the phone's verdict stands.
+  static Future<GradeResult> grade(Question q, String userAnswer) async {
+    final local = await gradeLocal(q, userAnswer);
+    if (local.correct ||
+        q.type == QuestionType.mcq ||
+        !canUseAi ||
+        normalizeAnswer(userAnswer).length < 3) {
+      return local;
     }
-    return isLocallyCorrect(q, user);
+    try {
+      final right = await AiClient.grade(
+        question: q.questionText,
+        correctAnswer: q.correctAnswer,
+        userAnswer: userAnswer.trim(),
+        timeout: const Duration(seconds: 5),
+      );
+      if (right) return const GradeResult(correct: true);
+    } catch (e) {
+      debugPrint('AI grading failed, keeping the local verdict: $e');
+    }
+    return local;
+  }
+
+  /// [grade], as a plain yes or no.
+  static Future<bool> gradeAnswer(Question q, String userAnswer) async =>
+      (await grade(q, userAnswer)).correct;
+
+  /// Marks an answer on the phone only. Like [gradeLocally], but first
+  /// makes sure the other answers in the bank are known, so a typo that
+  /// spells a different answer is not forgiven.
+  static Future<GradeResult> gradeLocal(Question q, String userAnswer) async {
+    if (q.type != QuestionType.mcq && userAnswer.trim().isNotEmpty) {
+      await _loadKnownTerms();
+    }
+    return gradeLocally(q, userAnswer);
+  }
+
+  static int _knownFor = -1;
+
+  /// Fills [AnswerGrader.knownTerms] with every answer, alternative and
+  /// option in the bank. Read again only when the bank has changed size.
+  static Future<void> _loadKnownTerms() async {
+    try {
+      final db = await AppDatabase.instance;
+      final count =
+          (await db.rawQuery('SELECT COUNT(*) AS n FROM questions')).first['n']
+              as int;
+      if (count == _knownFor) return;
+      final terms = <String>{};
+      void add(String key) {
+        // Shorter words get no typo allowance, so they cannot collide.
+        if (key.length >= 5) terms.add(key);
+      }
+
+      List<String> list(Object? json) {
+        try {
+          return [for (final e in jsonDecode('$json') as List) '$e'];
+        } catch (_) {
+          return const [];
+        }
+      }
+
+      for (final row in await db.rawQuery(
+        'SELECT answer, alt_answers, options FROM questions',
+      )) {
+        final forms = AnswerGrader.buildForms(
+          '${row['answer']}',
+          list(row['alt_answers']),
+        );
+        for (final form in forms) {
+          for (final concept in form.concepts) {
+            concept.keys.forEach(add);
+          }
+        }
+        for (final option in list(row['options'])) {
+          add(AnswerGrader.termKey(option));
+        }
+      }
+      AnswerGrader.knownTerms = terms;
+      _knownFor = count;
+    } catch (e) {
+      debugPrint('Could not read the bank\'s answers: $e');
+    }
   }
 
   /// Whether the app can mark [userAnswer] by itself without any doubt.
-  /// Null means "a typed answer that is not an exact match": let the AI
-  /// judge when it is available.
+  /// Null means "a typed answer the phone could not match": the AI may
+  /// judge it when the plan includes it, otherwise it is wrong.
   static bool? certainVerdict(Question q, String userAnswer) {
     if (userAnswer.trim().isEmpty) return false;
-    if (q.type == QuestionType.mcq) return isLocallyCorrect(q, userAnswer);
-    return _isExact(q, userAnswer) ? true : null;
+    final local = isLocallyCorrect(q, userAnswer);
+    if (q.type == QuestionType.mcq || local) return local;
+    return null;
   }
 
   /// Asks the AI tutor to explain an answer: where the student went wrong
@@ -370,8 +382,10 @@ class QuestionService {
     required int count,
     Random? rng,
   }) async {
-    if (!AiClient.available) {
-      return const GenerationResult(error: AiClient.signInHint);
+    if (!canUseAi) {
+      return GenerationResult(
+        error: AiClient.available ? AiClient.proHint : AiClient.signInHint,
+      );
     }
     final wanted = topicIds.toSet();
     final topics =
@@ -411,13 +425,14 @@ class QuestionService {
   /// Keeps fresh questions ready: for the topics behind [selectors], any
   /// topic with fewer than [targetUnseen] never-answered questions gets
   /// new ones from the AI (emptiest topics first, at most [maxTopics] per
-  /// run to stay inside free-tier limits). Does nothing when signed out.
+  /// run to stay inside the daily allowance). Does nothing when signed out
+  /// or on a plan without the AI.
   static Future<GenerationResult> topUp(
     Iterable<String> selectors, {
     int targetUnseen = 5,
     int maxTopics = 2,
   }) async {
-    if (_toppingUp || !AiClient.available) {
+    if (_toppingUp || !canUseAi) {
       return const GenerationResult();
     }
     _toppingUp = true;

@@ -11,6 +11,7 @@
 /// - `sessions`   one row per alarm ring or practice session, so the
 ///                reports can show history and time-to-wake
 /// - `alarm_events` the alarm diary: what happened to each alarm and when
+/// - `question_flags` questions the user reported as wrong or unclear
 /// - `meta`       small key/value store (seed versions)
 library;
 
@@ -19,7 +20,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 5;
+  static const int schemaVersion = 6;
   static const String fileName = 'brainwake.db';
 
   static Database? _db;
@@ -73,7 +74,8 @@ class AppDatabase {
         name TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
         is_custom INTEGER NOT NULL DEFAULT 0,
-        description TEXT NOT NULL DEFAULT ''
+        description TEXT NOT NULL DEFAULT '',
+        access TEXT NOT NULL DEFAULT 'paid'
       )''');
     batch.execute('''
       CREATE TABLE questions(
@@ -118,6 +120,9 @@ class AppDatabase {
       batch.execute(sql);
     }
     batch.execute(_createAlarmEvents);
+    for (final sql in _createQuestionFlags) {
+      batch.execute(sql);
+    }
     await batch.commit(noResult: true);
   }
 
@@ -153,6 +158,25 @@ class AppDatabase {
       detail TEXT NOT NULL DEFAULT '{}',
       synced INTEGER NOT NULL DEFAULT 0
     )''';
+
+  /// Questions the user flagged (see lib/data/flag_store.dart). No link
+  /// to the questions table on purpose: a flag must survive the question
+  /// being replaced. One flag per question.
+  static const List<String> _createQuestionFlags = [
+    '''
+    CREATE TABLE question_flags(
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT NOT NULL UNIQUE,
+      question_id TEXT NOT NULL,
+      question_text TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL DEFAULT '',
+      note TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      synced INTEGER NOT NULL DEFAULT 0
+    )''',
+    'CREATE UNIQUE INDEX idx_question_flags_question '
+        'ON question_flags(question_id)',
+  ];
 
   /// Brings an older database up to date without losing anything.
   static Future<void> _upgrade(Database db, int from, int to) async {
@@ -200,6 +224,16 @@ class AppDatabase {
       await db.execute(
         "ALTER TABLE topics ADD COLUMN description TEXT NOT NULL DEFAULT ''",
       );
+    }
+    if (from < 6) {
+      // Who may open a topic: 'guest', 'free' or 'paid'
+      // (see lib/services/entitlements.dart).
+      await db.execute(
+        "ALTER TABLE topics ADD COLUMN access TEXT NOT NULL DEFAULT 'paid'",
+      );
+      for (final sql in _createQuestionFlags) {
+        await db.execute(sql);
+      }
     }
   }
 

@@ -1,5 +1,5 @@
 /// Add / edit one alarm: time, repeat days, name, topics, difficulty,
-/// ringtone, fade and snooze, with a summary of the result above Done.
+/// ringtone, volume, fade and snooze. Done is in the top right corner.
 library;
 
 import 'dart:io';
@@ -14,9 +14,9 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../services/alarm_provider.dart';
 import '../services/bank_provider.dart';
+import '../services/entitlements.dart';
 import '../services/theme_provider.dart';
-import '../theme/app_theme.dart';
-import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import '../widgets/time_wheel.dart';
 import '../widgets/topic_picker.dart';
 
@@ -79,6 +79,10 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
   late int _requiredStreak;
   late int _snoozeMinutes;
 
+  /// The alarm's own volume (0.2 to 1.0). Only used on a paid plan; kept
+  /// as it is otherwise, so it is still there when the plan comes back.
+  late double _volume;
+
   // Plays ringtone previews in the picker.
   final AudioPlayer _previewPlayer = AudioPlayer();
   String? _previewing;
@@ -101,6 +105,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     _fadeDuration = a?.fadeDuration ?? 30.0; // new alarms fade in gently
     _requiredStreak = a?.requiredStreak ?? AlarmItem.easyStreak;
     _snoozeMinutes = a?.snoozeMinutes ?? 5;
+    _volume = (a?.volume ?? 1.0).clamp(AlarmProvider.minVolume, 1.0).toDouble();
 
     if (a != null && a.activeDays.isNotEmpty) {
       _repeatMode = 1;
@@ -139,6 +144,11 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
 
   void _saveAlarm() {
     final provider = Provider.of<AlarmProvider>(context, listen: false);
+    // A new alarm above the plan's limit is not saved: say why instead.
+    if (widget.existingAlarm == null && !provider.canAddAlarm) {
+      showAlarmLimitSheet(context);
+      return;
+    }
     final label = _labelCtrl.text.trim();
     final newAlarm = AlarmItem(
       id:
@@ -151,7 +161,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       vibrate: _vibrate,
       activeDays: List.of(_activeDays),
       fadeDuration: _fadeDuration,
-      volume: widget.existingAlarm?.volume ?? 1.0,
+      volume: _volume,
       requiredStreak: _requiredStreak,
       snoozeMinutes: _snoozeMinutes,
       isEnabled: _willBeOn,
@@ -221,7 +231,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     if (picked == null || !mounted) return;
     // Every topic ticked is the same as "all topics", which also covers
     // topics added later. (Topics of archived units are not part of "all".)
-    final everything = bank.activeTopics.map((t) => t.id).toSet();
+    final everything = bank.openTopics.map((t) => t.id).toSet();
     final all =
         picked.length == everything.length && picked.containsAll(everything);
     setState(() => _topics = all ? [] : picked.toList());
@@ -661,35 +671,8 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     final cardColor = scheme.surfaceContainerHighest;
     final bank = context.watch<BankProvider>();
     final muted = TextStyle(color: scheme.onSurfaceVariant);
-    final use24 = context.watch<ThemeProvider>().use24Hour;
 
     return Scaffold(
-      // Always in view, so what will be saved can be checked at any moment
-      // without scrolling. Re-read every half minute because "in 9 hours"
-      // goes stale while the screen is open.
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              EveryHalfMinute(
-                builder: (context) => _SummaryCard(
-                  time: formatTimeOfDay(_selectedTime, use24Hour: use24),
-                  days: AlarmItem.describeDays(_activeDays),
-                  topics: bank.describe(_topics),
-                  difficulty: _difficultyText(_requiredStreak),
-                  snooze: '$_snoozeMinutes-minute mercy snooze',
-                  rings: _ringsText(use24),
-                ),
-              ),
-              const SizedBox(height: 8),
-              PrimaryButton(label: 'Done', height: 48, onPressed: _saveAlarm),
-            ],
-          ),
-        ),
-      ),
       appBar: AppBar(
         leading: TextButton(
           onPressed: () => Navigator.pop(context),
@@ -701,6 +684,17 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
+        // The only Done on the screen. It sits up here so that small
+        // screens keep their whole height for the settings.
+        actions: [
+          TextButton(
+            onPressed: _saveAlarm,
+            child: const Text(
+              'Done',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
       ),
       body: ListView(
         padding: EdgeInsets.fromLTRB(
@@ -779,12 +773,10 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
             const SizedBox(height: 16),
           ],
 
-          // Settings List
-          Container(
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(20),
-            ),
+          // Settings list. A Material, so the rows' tap ripples show.
+          Material(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(20),
             clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
@@ -840,6 +832,11 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                   onTap: _showFadePicker,
                 ),
                 const Divider(height: 1, indent: 16),
+                ListenableBuilder(
+                  listenable: Entitlements.instance,
+                  builder: (context, _) => _volumeRow(muted),
+                ),
+                const Divider(height: 1, indent: 16),
                 SwitchListTile(
                   title: const Text('Vibrate'),
                   value: _vibrate,
@@ -875,15 +872,49 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     );
   }
 
-  /// "Rings tomorrow 7:00 AM, in 9 hours": when the alarm as it stands
-  /// would first ring.
-  String _ringsText(bool use24) {
-    if (!_willBeOn) return 'Stays off until you switch it on.';
-    final now = DateTime.now();
-    final next = calculateNextTrigger(_selectedTime, _activeDays, now);
-    return 'Rings ${describeDay(next, now)} '
-        '${formatClock(next, use24Hour: use24)}, '
-        '${describeTimeUntil(next, now)}';
+  /// The alarm's volume: a slider on a paid plan, otherwise a locked row
+  /// that says alarms ring at maximum.
+  Widget _volumeRow(TextStyle muted) {
+    if (!Entitlements.instance.canSetVolume) {
+      return ListTile(
+        title: const Text('Alarm volume: Maximum'),
+        trailing: const Icon(Icons.lock_rounded, size: 20),
+        onTap: () => showLockedSheet(
+          context,
+          title: 'Alarm volume',
+          message: 'Choosing a quieter volume is part of Pro.',
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text('Alarm volume', style: TextStyle(fontSize: 16)),
+              ),
+              Text('${(_volume * 100).round()}%', style: muted),
+            ],
+          ),
+          Slider(
+            value: _volume,
+            min: AlarmProvider.minVolume,
+            max: 1.0,
+            divisions: 8,
+            label: '${(_volume * 100).round()}%',
+            onChanged: (v) => setState(() => _volume = v),
+          ),
+          Text(
+            'Rings at this volume and stays locked there. The volume keys '
+            'cannot change it while it rings.',
+            style: muted.copyWith(fontSize: 12),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildDayBubble(String label, int dayIndex, ColorScheme scheme) {
@@ -915,81 +946,4 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
   String _getCustomDaysText() => _customDays.isEmpty
       ? 'No days picked: rings once'
       : AlarmItem.describeDays(_customDays);
-}
-
-/// The alarm as it will be saved, in three short lines: when, what it
-/// asks, and when it first rings.
-class _SummaryCard extends StatelessWidget {
-  final String time;
-  final String days;
-  final String topics;
-  final String difficulty;
-  final String snooze;
-  final String rings;
-  const _SummaryCard({
-    required this.time,
-    required this.days,
-    required this.topics,
-    required this.difficulty,
-    required this.snooze,
-    required this.rings,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '$time \u00b7 $days',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontFamily: AppTheme.display,
-              fontWeight: FontWeight.w700,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '$topics \u00b7 $difficulty \u00b7 $snooze',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall,
-          ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Icon(
-                Icons.notifications_active_rounded,
-                size: 15,
-                color: scheme.primary,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  rings,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: scheme.onSurface,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 }

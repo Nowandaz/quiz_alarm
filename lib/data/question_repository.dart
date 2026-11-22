@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../models/models.dart';
+import '../services/entitlements.dart';
 import 'app_database.dart';
 
 class QuestionRepository {
@@ -122,11 +123,17 @@ class QuestionRepository {
         final topicId = topics[t]['id'] as String;
         keepTopics.add(topicId);
         await txn.rawInsert(
-          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom) '
-          'VALUES(?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET '
+          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom, access) '
+          'VALUES(?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET '
           'unit_id = excluded.unit_id, name = excluded.name, '
-          'sort_order = excluded.sort_order',
-          [topicId, unitId, topics[t]['name'], t],
+          'sort_order = excluded.sort_order, access = excluded.access',
+          [
+            topicId,
+            unitId,
+            topics[t]['name'],
+            t,
+            cleanAccess(topics[t]['access']),
+          ],
         );
 
         final questions = ((topics[t]['questions'] ?? const []) as List)
@@ -252,6 +259,7 @@ class QuestionRepository {
     name: r['name'] as String,
     isCustom: r['is_custom'] == 1,
     description: (r['description'] ?? '') as String,
+    access: cleanAccess(r['access']),
   );
 
   static Future<List<Topic>> getTopics() async {
@@ -314,6 +322,7 @@ class QuestionRepository {
       'sort_order': 1000,
       'is_custom': 1,
       'description': description.trim(),
+      'access': TopicAccess.free,
     });
     return Topic(
       id: id,
@@ -321,6 +330,7 @@ class QuestionRepository {
       name: clean,
       isCustom: true,
       description: description.trim(),
+      access: TopicAccess.free,
     );
   }
 
@@ -368,6 +378,51 @@ class QuestionRepository {
     );
   }
 
+  // ------------------------------------------------- what the plan opens
+
+  /// Questions of a bank topic that are open without a paid plan.
+  static const int freeQuestionCap = 10;
+
+  /// 'guest', 'free' or 'paid'. Anything else (also nothing) is 'paid'.
+  static String cleanAccess(Object? raw) =>
+      raw == TopicAccess.guest || raw == TopicAccess.free
+      ? raw as String
+      : TopicAccess.paid;
+
+  /// Whether the person may open [topic] right now. A topic they made
+  /// themselves needs an account and nothing more.
+  static bool isOpen(Topic topic) => Entitlements.instance.canOpenTopic(
+    topic.isCustom ? TopicAccess.free : topic.access,
+  );
+
+  /// How many of [topic]'s questions are open right now: none when the
+  /// topic is locked, the first [freeQuestionCap] of a bank topic without
+  /// a paid plan, otherwise all of them (null = no limit).
+  static int? openLimit(Topic topic) => !isOpen(topic)
+      ? 0
+      : Entitlements.instance.isPaid || topic.isCustom
+      ? null
+      : freeQuestionCap;
+
+  /// The one rule for "which questions are open right now", as an SQL
+  /// condition on a question [q] and its topic [t]. It says the same as
+  /// [isOpen] and [openLimit], and every read of questions for use goes
+  /// through it. It works from what is on the phone, so it also holds
+  /// offline and after a plan has run out.
+  static String _openSql({String q = 'q', String t = 't'}) {
+    final e = Entitlements.instance;
+    if (e.isPaid) return '1 = 1';
+    final firstFew =
+        '$q.id IN (SELECT o.id FROM questions o WHERE o.topic_id = $q.topic_id '
+        'ORDER BY o.created_at, o.id LIMIT $freeQuestionCap)';
+    if (e.isGuest) {
+      return "($t.is_custom = 0 AND $t.access = '${TopicAccess.guest}' "
+          'AND $firstFew)';
+    }
+    return '($t.is_custom = 1 OR ($t.access IN '
+        "('${TopicAccess.guest}', '${TopicAccess.free}') AND $firstFew))";
+  }
+
   // -------------------------------------------------------- archived units
 
   /// Preference holding the ids of archived units. It lives outside the
@@ -396,6 +451,10 @@ class QuestionRepository {
   /// that is named still counts when archived: an alarm set on it keeps
   /// working. If every unit is archived, "every topic" really is every
   /// topic, because an alarm must always have questions to ask.
+  ///
+  /// Topics the plan does not open ([isOpen]) are left out. A selection
+  /// made only of locked topics falls back to every open topic, again so
+  /// that an alarm always has something to ask.
   static List<String> resolveIn(
     Iterable<String> selectors,
     List<StudyUnit> units,
@@ -414,16 +473,17 @@ class QuestionRepository {
         if (t.id.toLowerCase() == s ||
             t.name.toLowerCase() == s ||
             unitIds.contains(t.unitId)) {
-          ids.add(t.id);
+          if (isOpen(t)) ids.add(t.id);
         }
       }
     }
     if (ids.isNotEmpty) return ids.toList();
+    final open = topics.where(isOpen).toList();
     final active = [
-      for (final t in topics)
+      for (final t in open)
         if (!archived.contains(t.unitId)) t.id,
     ];
-    return active.isEmpty ? topics.map((t) => t.id).toList() : active;
+    return active.isEmpty ? open.map((t) => t.id).toList() : active;
   }
 
   static Future<List<String>> resolveTopicIds(
@@ -452,7 +512,10 @@ class QuestionRepository {
 
     final parts = <String>[];
     for (final u in units) {
-      final inUnit = topics.where((t) => t.unitId == u.id).toList();
+      // A unit is named when all of its open topics are picked.
+      final inUnit = topics
+          .where((t) => t.unitId == u.id && isOpen(t))
+          .toList();
       final picked = inUnit.where((t) => ids.contains(t.id)).toList();
       if (picked.isEmpty) continue;
       if (picked.length == inUnit.length) {
@@ -481,10 +544,13 @@ class QuestionRepository {
       'SELECT q.*, t.name AS topic_name FROM questions q '
       'JOIN topics t ON t.id = q.topic_id';
 
+  /// The questions of a topic that are open right now (see [_openSql]):
+  /// none for a locked topic, the first few without a paid plan.
   static Future<List<Question>> getQuestions(String topicId) async {
     await ensureReady();
     final rows = await (await _db).rawQuery(
-      '$_questionSelect WHERE q.topic_id = ? ORDER BY q.created_at, q.id',
+      '$_questionSelect WHERE q.topic_id = ? AND ${_openSql()} '
+      'ORDER BY q.created_at, q.id',
       [topicId],
     );
     return rows.map(Question.fromRow).toList();
@@ -577,7 +643,8 @@ class QuestionRepository {
     return {for (final r in rows) r['id'] as String: r['correct'] == 1};
   }
 
-  /// Per-topic totals, keyed by topic id.
+  /// Per-topic totals, keyed by topic id. Only open questions count, so
+  /// a locked topic is not in the map.
   static Future<Map<String, TopicStats>> getStats() async {
     await ensureReady();
     final rows = await (await _db).rawQuery('''
@@ -586,8 +653,10 @@ class QuestionRepository {
              SUM(CASE WHEN la.correct IS NOT NULL THEN 1 ELSE 0 END) AS seen,
              SUM(CASE WHEN la.correct = 1 THEN 1 ELSE 0 END) AS mastered
       FROM questions q
+      JOIN topics t ON t.id = q.topic_id
       LEFT JOIN attempts la ON la.id =
         (SELECT MAX(a.id) FROM attempts a WHERE a.question_id = q.id)
+      WHERE ${_openSql()}
       GROUP BY q.topic_id''');
     return {
       for (final r in rows)
@@ -605,6 +674,10 @@ class QuestionRepository {
   /// while anything else is left; after that they come round again, or
   /// with [repeat] false the result is null. Returns null only if there are no
   /// questions at all.
+  ///
+  /// Only open questions are picked (see [_openSql]). The one exception:
+  /// an alarm ([repeat]) on a phone with no open question at all still
+  /// gets one, because a ringing alarm must always have something to ask.
   static Future<Question?> pickNext(
     List<String> topicIds, {
     Set<String> exclude = const {},
@@ -613,7 +686,10 @@ class QuestionRepository {
   }) async {
     await ensureReady();
     final db = await _db;
-    Future<List<Map<String, Object?>>> load(List<String> ids) {
+    Future<List<Map<String, Object?>>> load(
+      List<String> ids, {
+      bool openOnly = true,
+    }) {
       final marks = List.filled(ids.length, '?').join(',');
       return db.rawQuery(
         'SELECT q.*, t.name AS topic_name, la.correct AS last_correct, '
@@ -621,13 +697,15 @@ class QuestionRepository {
         'JOIN topics t ON t.id = q.topic_id '
         'LEFT JOIN attempts la ON la.id = '
         '(SELECT MAX(a.id) FROM attempts a WHERE a.question_id = q.id) '
-        '${ids.isEmpty ? '' : 'WHERE q.topic_id IN ($marks)'}',
+        'WHERE ${openOnly ? _openSql() : '1 = 1'} '
+        '${ids.isEmpty ? '' : 'AND q.topic_id IN ($marks)'}',
         ids,
       );
     }
 
     var rows = await load(topicIds);
     if (rows.isEmpty && topicIds.isNotEmpty) rows = await load(const []);
+    if (rows.isEmpty && repeat) rows = await load(const [], openOnly: false);
     if (rows.isEmpty) return null;
 
     var pool = rows.where((r) => !exclude.contains(r['id'])).toList();

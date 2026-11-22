@@ -10,11 +10,14 @@ import '../models/models.dart';
 import '../services/bank_provider.dart';
 import '../services/ai_client.dart';
 import '../services/billing.dart';
+import '../services/entitlements.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import '../widgets/question_image.dart';
 import 'practice_setup.dart';
+import 'unit_screen.dart' show confirmDeleteTopic;
 import 'upgrade_screen.dart';
 
 class TopicScreen extends StatefulWidget {
@@ -37,6 +40,14 @@ class _TopicScreenState extends State<TopicScreen> {
   void initState() {
     super.initState();
     _load();
+    // The plan decides which questions are open and whether the AI is.
+    Entitlements.instance.addListener(_load);
+  }
+
+  @override
+  void dispose() {
+    Entitlements.instance.removeListener(_load);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -77,6 +88,10 @@ class _TopicScreenState extends State<TopicScreen> {
   }
 
   Future<void> _generate() async {
+    if (!Entitlements.instance.canUseAi) {
+      await showLockedSheet(context, title: 'AI questions', message: aiIsPro);
+      return;
+    }
     if (!AiClient.available) {
       if (mounted) {
         _message('Sign in needed', signInForAi);
@@ -107,33 +122,15 @@ class _TopicScreenState extends State<TopicScreen> {
   }
 
   Future<void> _deleteTopic() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete "${widget.topic.name}"?'),
-        content: const Text('The topic and all its questions will be removed.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    await QuestionRepository.deleteCustomTopic(widget.topic.id);
-    QuestionService.changes.value++;
-    if (mounted) Navigator.pop(context);
+    final deleted = await confirmDeleteTopic(context, widget.topic);
+    if (deleted && mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
     final stats = context.watch<BankProvider>().statsOf(widget.topic.id);
     final theme = Theme.of(context);
+    final aiLocked = !Entitlements.instance.canUseAi;
     final questions = _questions;
 
     return Scaffold(
@@ -202,7 +199,9 @@ class _TopicScreenState extends State<TopicScreen> {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.auto_awesome),
+                      : Icon(
+                          aiLocked ? Icons.lock_rounded : Icons.auto_awesome,
+                        ),
                   label: Text(
                     _generating
                         ? 'Writing questions (up to a minute)...'
@@ -237,8 +236,10 @@ class _TopicScreenState extends State<TopicScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Tap Generate 5 with AI to have some written '
-                            'for you.',
+                            aiLocked
+                                ? aiIsPro
+                                : 'Tap Generate 5 with AI to have some '
+                                      'written for you.',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodySmall,
                           ),

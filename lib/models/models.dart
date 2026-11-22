@@ -33,12 +33,18 @@ class Topic {
   /// objectives). Given to the AI when it writes questions.
   final String description;
 
+  /// Who may open the topic: 'guest' (anyone), 'free' (anyone with an
+  /// account) or 'paid' (see TopicAccess in services/entitlements.dart).
+  /// A topic the user made counts as 'free' whatever is stored here.
+  final String access;
+
   const Topic({
     required this.id,
     required this.unitId,
     required this.name,
     this.isCustom = false,
     this.description = '',
+    this.access = 'paid',
   });
 }
 
