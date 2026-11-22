@@ -306,25 +306,6 @@ class _AccountScreenState extends State<AccountScreen> {
                               height: 1.4,
                             ),
                           ),
-                          const SizedBox(height: 16),
-                          const Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              Pill(
-                                'Answer to dismiss',
-                                icon: Icons.quiz_rounded,
-                              ),
-                              Pill(
-                                'AI tutor',
-                                icon: Icons.auto_awesome_rounded,
-                              ),
-                              Pill(
-                                'Track progress',
-                                icon: Icons.insights_rounded,
-                              ),
-                            ],
-                          ),
                           const SizedBox(height: 22),
 
                           GlossCard(

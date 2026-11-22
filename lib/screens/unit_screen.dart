@@ -5,8 +5,10 @@ library;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/bank_provider.dart';
+import '../services/question_service.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/lock_prompt.dart';
 import 'practice_setup.dart';
@@ -291,10 +293,19 @@ class TopicCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+                // A topic the user made can be deleted right from the list.
+                if (topic.isCustom)
+                  IconButton(
+                    tooltip: 'Delete topic',
+                    icon: const Icon(Icons.delete_outline),
+                    color: theme.colorScheme.onSurfaceVariant,
+                    onPressed: () => confirmDeleteTopic(context, topic),
+                  )
+                else
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
               ],
             ),
           ),
@@ -302,4 +313,33 @@ class TopicCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Asks, then deletes a topic the user made together with its questions.
+/// Returns true if it was deleted.
+Future<bool> confirmDeleteTopic(BuildContext context, Topic topic) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Delete "${topic.name}"?'),
+      content: const Text(
+        'The topic, its questions and your answers to them will be removed. '
+        'This cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true) return false;
+  await QuestionRepository.deleteCustomTopic(topic.id);
+  QuestionService.changes.value++;
+  return true;
 }

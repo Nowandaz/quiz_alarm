@@ -17,6 +17,7 @@ import '../widgets/app_widgets.dart';
 import '../widgets/lock_prompt.dart';
 import '../widgets/question_image.dart';
 import 'practice_setup.dart';
+import 'unit_screen.dart' show confirmDeleteTopic;
 import 'upgrade_screen.dart';
 
 class TopicScreen extends StatefulWidget {
@@ -121,27 +122,8 @@ class _TopicScreenState extends State<TopicScreen> {
   }
 
   Future<void> _deleteTopic() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete "${widget.topic.name}"?'),
-        content: const Text('The topic and all its questions will be removed.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    await QuestionRepository.deleteCustomTopic(widget.topic.id);
-    QuestionService.changes.value++;
-    if (mounted) Navigator.pop(context);
+    final deleted = await confirmDeleteTopic(context, widget.topic);
+    if (deleted && mounted) Navigator.pop(context);
   }
 
   @override

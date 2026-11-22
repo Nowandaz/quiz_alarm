@@ -14,6 +14,7 @@ import 'data/question_repository.dart';
 import 'services/bank_provider.dart';
 import 'services/billing.dart';
 import 'services/entitlements.dart';
+import 'services/profile_picture.dart';
 import 'services/sync_service.dart';
 import 'services/theme_provider.dart';
 import 'theme/app_theme.dart';
@@ -33,6 +34,10 @@ Future<void> main() async {
   final plan = Entitlements.instance;
   await plan.load();
   plan.refresh();
+
+  // The profile picture of whoever is signed in (kept on this phone).
+  await ProfilePicture.load();
+  Account.instance.addListener(ProfilePicture.load);
 
   // Syncing with the server: at start, shortly after anything of the
   // user's changes, and when they sign in or out.

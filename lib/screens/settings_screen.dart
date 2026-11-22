@@ -12,6 +12,7 @@ import '../services/account.dart';
 import '../services/ai_client.dart';
 import '../services/billing.dart';
 import '../services/entitlements.dart';
+import '../services/profile_picture.dart';
 import '../services/server_config.dart';
 import '../services/sound_prefs.dart';
 
@@ -36,7 +37,42 @@ class _SettingsScreenState extends State<SettingsScreen>
     with WidgetsBindingObserver {
   /// The groups that are dropped down. Only General at first; nothing is
   /// remembered between visits.
-  final Set<String> _open = {'General'};
+  final Set<String> _open = {};
+
+  /// Choose, change or remove the profile picture (kept on this phone).
+  Future<void> _editPicture() async {
+    final has = ProfilePicture.current.value != null;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: Text(has ? 'Choose another photo' : 'Choose a photo'),
+              subtitle: const Text('Kept on this phone only.'),
+              onTap: () => Navigator.pop(ctx, 'choose'),
+            ),
+            if (has)
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('Remove picture'),
+                onTap: () => Navigator.pop(ctx, 'remove'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (choice == 'remove') await ProfilePicture.remove();
+    if (choice != 'choose') return;
+    final problem = await ProfilePicture.choose();
+    if (problem != null && mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(problem)));
+    }
+  }
 
   // "Mute right and wrong sounds".
   bool _muteAnswerSounds = SoundPrefs.muteAnswerSounds;
@@ -590,10 +626,25 @@ class _SettingsScreenState extends State<SettingsScreen>
       ];
     }
     return [
-      ListTile(
-        leading: const Icon(Icons.account_circle_rounded),
-        title: Text(account.email ?? 'Signed in'),
-        subtitle: const Text('Signed in'),
+      ValueListenableBuilder<Uint8List?>(
+        valueListenable: ProfilePicture.current,
+        builder: (context, picture, _) => ListTile(
+          leading: CircleAvatar(
+            radius: 20,
+            backgroundColor: scheme.surfaceContainerHighest,
+            backgroundImage: picture == null ? null : MemoryImage(picture),
+            child: picture == null
+                ? Icon(Icons.person_rounded, color: scheme.onSurfaceVariant)
+                : null,
+          ),
+          title: Text(account.email ?? 'Signed in'),
+          subtitle: Text(
+            picture == null
+                ? 'Signed in. Tap to add a profile picture.'
+                : 'Signed in. Tap to change your picture.',
+          ),
+          onTap: _editPicture,
+        ),
       ),
       planRow,
       ValueListenableBuilder<bool>(

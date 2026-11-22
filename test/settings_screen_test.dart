@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 // The Settings screen: four groups that drop down, the new switches, and
 // the sections that were removed.
 import 'package:flutter/foundation.dart';
@@ -10,6 +12,7 @@ import 'package:provider/provider.dart';
 import 'package:quiz_alarm/screens/settings_screen.dart';
 import 'package:quiz_alarm/services/account.dart';
 import 'package:quiz_alarm/services/billing.dart';
+import 'package:quiz_alarm/services/profile_picture.dart';
 import 'package:quiz_alarm/services/entitlements.dart';
 import 'package:quiz_alarm/services/server_config.dart';
 import 'package:quiz_alarm/services/sound_prefs.dart';
@@ -50,15 +53,18 @@ void main() {
   });
   tearDown(() => Entitlements.instance.setForTest(null));
 
-  testWidgets('four groups; only General is open at first', (tester) async {
+  testWidgets('four groups, all closed at first', (tester) async {
     await show(tester);
     for (final group in ['General', 'Permissions', 'Account', 'Privacy']) {
       expect(find.text(group), findsOneWidget);
     }
-    expect(find.text('Theme'), findsOneWidget);
-    expect(find.text('24-hour clock'), findsOneWidget);
+    expect(find.text('Theme'), findsNothing);
     expect(find.text('Share alarm diagnostics'), findsNothing);
     expect(find.text('Sign in or create an account'), findsNothing);
+
+    await open(tester, 'General');
+    expect(find.text('Theme'), findsOneWidget);
+    expect(find.text('24-hour clock'), findsOneWidget);
 
     await open(tester, 'Privacy');
     expect(find.text('Share alarm diagnostics'), findsOneWidget);
@@ -71,6 +77,34 @@ void main() {
     expect(find.text('Theme'), findsNothing);
     await open(tester, 'Privacy');
     expect(find.text('Share alarm diagnostics'), findsNothing);
+  });
+
+  testWidgets('a profile picture can be added and removed', (tester) async {
+    Account.instance.signInForTest();
+    // A 1x1 PNG stands in for the gallery.
+    ProfilePicture.pick = () async => base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    );
+    await ProfilePicture.load();
+    await show(tester);
+    await open(tester, 'Account');
+    expect(find.textContaining('Tap to add a profile picture'), findsOneWidget);
+
+    await tester.tap(find.textContaining('Tap to add a profile picture'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Choose a photo'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pumpAndSettle();
+    expect(ProfilePicture.current.value, isNotNull);
+    expect(find.textContaining('Tap to change your picture'), findsOneWidget);
+
+    await tester.tap(find.textContaining('Tap to change your picture'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove picture'));
+    await tester.pumpAndSettle();
+    expect(ProfilePicture.current.value, isNull);
   });
 
   testWidgets('"What is stored" and "AI question generation" are gone', (
@@ -111,6 +145,7 @@ void main() {
 
   testWidgets('"Mute right and wrong sounds" is saved', (tester) async {
     await show(tester);
+    await open(tester, 'General');
     expect(SoundPrefs.muteAnswerSounds, isFalse);
     await tester.tap(find.text('Mute right and wrong sounds'));
     await tester.pumpAndSettle();

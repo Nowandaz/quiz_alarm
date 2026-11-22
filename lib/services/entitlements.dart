@@ -9,11 +9,13 @@
 ///   alarm's volume. (Ultra differs on the server: a higher AI allowance.)
 ///
 /// A paid plan is only trusted for as long as the server said it runs.
-/// The app remembers when the plan ends; at that moment the paid features
-/// lock by themselves and stay locked until the app has reached the server
-/// again ([needsCheck]). So a phone kept offline cannot keep a plan that
-/// has run out. A plan with no end date is re-checked every few days for
-/// the same reason.
+/// The app remembers when the plan ends and asks the server again at that
+/// moment. Online, an ended plan locks at once. Offline (the plan may
+/// have been renewed, and the phone cannot know), the paid features stay
+/// open for three more days and then lock until the app has reached the
+/// server again ([needsCheck]). So a phone kept offline cannot keep a plan
+/// that has run out. A plan with no end date is re-checked every three
+/// days for the same reason.
 library;
 
 import 'dart:async';
@@ -45,8 +47,13 @@ class Entitlements extends ChangeNotifier {
   /// Alarms a guest may have.
   static const int guestAlarmLimit = 3;
 
-  /// How long a plan is trusted without hearing from the server.
-  static const Duration recheckEvery = Duration(days: 7);
+  /// How long after a plan's end the paid features stay open when the
+  /// app cannot reach the server.
+  static const Duration offlineGrace = Duration(days: 3);
+
+  /// How long a plan WITHOUT an end date is trusted without hearing from
+  /// the server.
+  static const Duration recheckEvery = Duration(days: 3);
 
   static const String _storageKey = 'entitlement';
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
@@ -77,14 +84,19 @@ class Entitlements extends ChangeNotifier {
       _premium;
 
   /// True when a paid plan is remembered but cannot be trusted right now:
-  /// its time has run out, it has not been confirmed for too long, or the
-  /// phone's clock was turned back. Paid features are locked until the
+  /// it ended more than [offlineGrace] ago, it has no end date and has
+  /// not been confirmed for too long, or the phone's clock was turned
+  /// back. Paid features are locked until the
   /// app reaches the server ([refresh]).
   bool get needsCheck {
     if (_forced != null || !_hasStoredPlan) return false;
     final t = now();
-    if (_expires != null && !t.isBefore(_expires!)) return true;
-    if (t.difference(_checkedAt) > recheckEvery) return true;
+    final end = _expires;
+    if (end != null) {
+      if (!t.isBefore(end.add(offlineGrace))) return true;
+    } else if (t.difference(_checkedAt) > recheckEvery) {
+      return true;
+    }
     if (t.isBefore(_lastSeen.subtract(const Duration(minutes: 10)))) {
       return true;
     }
@@ -110,6 +122,17 @@ class Entitlements extends ChangeNotifier {
 
   /// When the paid plan ends (null: not on one, or it has no end date).
   DateTime? get expires => isPaid ? _expires : null;
+
+  /// True in the days after the plan's end while the app has not been
+  /// able to ask the server: still open, but about to lock.
+  bool get endingOffline {
+    final end = _expires;
+    return _forced == null &&
+        _hasStoredPlan &&
+        end != null &&
+        !now().isBefore(end) &&
+        !needsCheck;
+  }
 
   // ------------------------------------------------------------ what's open
 
@@ -247,16 +270,20 @@ class Entitlements extends ChangeNotifier {
     }
   }
 
-  /// Locks the paid features at the moment the plan ends, then tries to
-  /// reach the server (the plan may have been renewed).
+  /// At the moment the plan ends, asks the server (it may have been
+  /// renewed; if not, the server's answer locks the paid features). With
+  /// no answer, they lock when the offline days are over.
   void _armTimer() {
     _expiryTimer?.cancel();
     final end = _expires;
     if (!_hasStoredPlan || end == null) return;
-    final wait = end.difference(now());
+    final t = now();
+    final next = t.isBefore(end) ? end : end.add(offlineGrace);
+    final wait = next.difference(t);
     if (wait.isNegative || wait > const Duration(days: 20)) return;
     _expiryTimer = Timer(wait + const Duration(seconds: 1), () {
       notifyListeners();
+      _armTimer();
       refresh();
     });
   }

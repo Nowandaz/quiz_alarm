@@ -94,11 +94,26 @@ void main() {
     expect(plan.needsCheck, isFalse);
   });
 
-  test('when the plan ends it locks and asks for a check', () async {
+  test('offline, an ended plan stays open three days and then locks', () async {
     await start();
-    await buy(expires: clock.add(const Duration(days: 2)));
-    clock = clock.add(const Duration(days: 2, minutes: 1));
+    final end = clock.add(const Duration(days: 2));
+    await buy(expires: end);
+
+    // Just after the end, with no word from the server: still open.
+    clock = end.add(const Duration(minutes: 1));
+    expect(plan.needsCheck, isFalse);
+    expect(plan.level, PlanLevel.pro);
+    expect(plan.endingOffline, isTrue);
+
+    clock = end
+        .add(const Duration(days: 3))
+        .subtract(const Duration(minutes: 1));
+    expect(plan.level, PlanLevel.pro);
+
+    // Three days after the end: locked until the app is online.
+    clock = end.add(const Duration(days: 3, minutes: 1));
     expect(plan.needsCheck, isTrue);
+    expect(plan.endingOffline, isFalse);
     expect(plan.level, PlanLevel.free);
     expect(plan.canSetVolume, isFalse);
     expect(plan.expires, isNull);
@@ -110,10 +125,28 @@ void main() {
     expect(plan.level, PlanLevel.pro);
   });
 
-  test('a plan not confirmed for more than 7 days locks', () async {
+  test('online, an ended plan locks as soon as the server says so', () async {
+    await start();
+    final end = clock.add(const Duration(days: 2));
+    await buy(expires: end);
+    clock = end.add(const Duration(minutes: 1));
+    await plan.apply(premium: false, tier: '', tierName: '', expires: null);
+    expect(plan.level, PlanLevel.free);
+    expect(plan.needsCheck, isFalse);
+  });
+
+  test('a running plan does not lock for being offline', () async {
+    await start();
+    await buy(expires: clock.add(const Duration(days: 30)));
+    clock = clock.add(const Duration(days: 20));
+    expect(plan.needsCheck, isFalse);
+    expect(plan.level, PlanLevel.pro);
+  });
+
+  test('a plan with no end date locks after 3 days without a check', () async {
     await start();
     await buy(); // no end date
-    clock = clock.add(const Duration(days: 7));
+    clock = clock.add(const Duration(days: 3));
     expect(plan.needsCheck, isFalse);
     expect(plan.level, PlanLevel.pro);
     clock = clock.add(const Duration(minutes: 1));
