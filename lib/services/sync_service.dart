@@ -32,6 +32,7 @@ import '../data/flag_store.dart';
 import '../data/question_repository.dart';
 import 'account.dart';
 import 'entitlements.dart';
+import 'profile_picture.dart';
 import 'question_service.dart';
 import 'server_config.dart';
 import 'system_bridge.dart';
@@ -138,6 +139,8 @@ class SyncService {
           await _upload();
           // Questions flagged for review (never throws).
           await FlagStore.upload();
+          // The profile picture (never throws).
+          await ProfilePicture.sync();
         } catch (e) {
           problems.add('your progress: ${_short(e)}');
         }
@@ -897,6 +900,7 @@ class SyncService {
                   'dismissed',
                   'snoozed',
                   'finished',
+                  'timed_out',
                 }.contains(s['outcome'])
                 ? s['outcome']
                 : null,

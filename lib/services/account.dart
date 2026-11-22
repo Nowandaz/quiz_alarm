@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import 'profile_picture.dart';
 import 'server_config.dart';
 import 'sync_service.dart';
 
@@ -41,6 +42,10 @@ class Account extends ChangeNotifier {
   /// Android app claims this address in its manifest).
   static const String oauthRedirect = 'brainwake://auth';
   static const FlutterSecureStorage _secure = FlutterSecureStorage();
+
+  /// The version (date) of the Terms and Privacy Policy a new account
+  /// agrees to. Change it when the legal pages change.
+  static const String termsVersion = '2026-11-22';
 
   /// Tests replace this with a fake.
   @visibleForTesting
@@ -236,12 +241,28 @@ class Account extends ChangeNotifier {
     }
   }
 
-  Future<SignUpResult> signUp(String email, String password) async {
+  /// Creates an account. The sign-up form only calls this once the
+  /// person has agreed to the terms; when (and to which version) is kept
+  /// with the account. [now] is for tests.
+  Future<SignUpResult> signUp(
+    String email,
+    String password, {
+    DateTime? now,
+  }) async {
     try {
       final res = await _post(
         // The confirmation link opens this app, already signed in.
         '/signup?redirect_to=${Uri.encodeQueryComponent(oauthRedirect)}',
-        {'email': email.trim(), 'password': password},
+        {
+          'email': email.trim(),
+          'password': password,
+          'data': {
+            'terms_accepted_at': (now ?? DateTime.now())
+                .toUtc()
+                .toIso8601String(),
+            'terms_version': termsVersion,
+          },
+        },
       );
       if (res.statusCode != 200) return SignUpResult(error: _reason(res));
       final data = jsonDecode(utf8.decode(res.bodyBytes));
@@ -433,6 +454,9 @@ class Account extends ChangeNotifier {
   Future<String?> deleteAccount() async {
     final token = await accessToken();
     if (token == null) return _network('signed out or offline');
+    // The picture first, while the account can still prove who it is.
+    await ProfilePicture.deleteFromServer();
+    Future<void> keepPicture() => ProfilePicture.markNeedsUpload();
     try {
       final res = await httpClient
           .post(
@@ -447,10 +471,16 @@ class Account extends ChangeNotifier {
             body: '{}',
           )
           .timeout(const Duration(seconds: 20));
-      if (res.statusCode != 200 && res.statusCode != 204) return _reason(res);
+      if (res.statusCode != 200 && res.statusCode != 204) {
+        // The account stays, so its picture goes back up with the next sync.
+        await keepPicture();
+        return _reason(res);
+      }
     } catch (e) {
+      await keepPicture();
       return _network(e);
     }
+    await ProfilePicture.forgetLocal();
     try {
       await SyncService.forgetLocalHistory();
     } catch (e) {

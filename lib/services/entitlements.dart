@@ -76,6 +76,9 @@ class Entitlements extends ChangeNotifier {
   @visibleForTesting
   DateTime Function() now = DateTime.now;
 
+  /// The time by the clock the plan is judged with.
+  DateTime get time => now();
+
   // ------------------------------------------------------------------ level
 
   bool get _hasStoredPlan =>
@@ -132,6 +135,28 @@ class Entitlements extends ChangeNotifier {
         end != null &&
         !now().isBefore(end) &&
         !needsCheck;
+  }
+
+  /// Plans ending within this many days are announced ([endsSoon]).
+  static const int endsSoonDays = 3;
+
+  /// Whole days until the paid plan ends, rounding up (a plan with one
+  /// hour left has 1 day left; 0 at or after its end). Null when not on a
+  /// paid plan or it has no end date.
+  int? get daysLeft {
+    final end = expires;
+    if (end == null) return null;
+    final left = end.difference(now());
+    if (left <= Duration.zero) return 0;
+    return (left.inMicroseconds / Duration.microsecondsPerDay).ceil();
+  }
+
+  /// True when a paid plan ends in [endsSoonDays] days or less, or has
+  /// ended but is still open because the server could not be asked
+  /// ([endingOffline]).
+  bool get endsSoon {
+    final days = daysLeft;
+    return days != null && days <= endsSoonDays;
   }
 
   // ------------------------------------------------------------ what's open

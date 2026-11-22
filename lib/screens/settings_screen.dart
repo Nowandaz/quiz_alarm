@@ -39,7 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   /// remembered between visits.
   final Set<String> _open = {};
 
-  /// Choose, change or remove the profile picture (kept on this phone).
+  /// Choose, change or remove the profile picture (saved with the account).
   Future<void> _editPicture() async {
     final has = ProfilePicture.current.value != null;
     final choice = await showModalBottomSheet<String>(
@@ -52,7 +52,7 @@ class _SettingsScreenState extends State<SettingsScreen>
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
               title: Text(has ? 'Choose another photo' : 'Choose a photo'),
-              subtitle: const Text('Kept on this phone only.'),
+              subtitle: const Text('Saved with your account.'),
               onTap: () => Navigator.pop(ctx, 'choose'),
             ),
             if (has)

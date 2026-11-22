@@ -13,6 +13,7 @@ import 'package:quiz_alarm/data/question_repository.dart';
 import 'package:quiz_alarm/services/account.dart';
 import 'package:quiz_alarm/services/ai_client.dart';
 import 'package:quiz_alarm/services/entitlements.dart';
+import 'package:quiz_alarm/services/profile_picture.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -43,6 +44,9 @@ Future<void> resetApp({
   FlutterSecureStorage.setMockInitialValues({});
   Account.instance.resetForTest();
   if (signedIn) Account.instance.signInForTest();
+  // No profile picture on the (fake) server unless a test puts one there.
+  ProfilePicture.resetForTest();
+  ProfilePicture.httpClient = MockClient((_) async => http.Response('', 404));
   openAllFeatures();
 }
 

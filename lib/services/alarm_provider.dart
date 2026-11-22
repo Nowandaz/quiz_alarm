@@ -121,8 +121,113 @@ class MissedRing {
   });
 }
 
+/// A ring that sounded but was never answered: it stopped by itself (see
+/// [AlarmProvider.untouchedRingLimit]). Kept until the user has been asked
+/// about it.
+class TimedOutRing {
+  final int alarmId;
+  final String label;
+
+  /// The alarm's own time on the day it rang ("your 7:00 AM alarm").
+  final DateTime scheduled;
+
+  /// How long it rang before it gave up.
+  final int rangSeconds;
+
+  /// True when the questions were started but not finished.
+  final bool started;
+
+  /// The volume it rang at, 0..1.
+  final double volume;
+
+  /// Whether it vibrated as well.
+  final bool vibrate;
+
+  const TimedOutRing({
+    required this.alarmId,
+    required this.label,
+    required this.scheduled,
+    required this.rangSeconds,
+    this.started = false,
+    this.volume = 1.0,
+    this.vibrate = true,
+  });
+
+  /// "10 minutes" (at least one).
+  String get rangText {
+    final minutes = (rangSeconds / 60).round().clamp(1, 1 << 30);
+    return '$minutes minute${minutes == 1 ? '' : 's'}';
+  }
+
+  /// "It rang for 10 minutes and was not answered."
+  String get summary => 'It ${_rangAnd()}';
+
+  /// The text of the "Missed alarm" notification.
+  String noticeBody({required bool use24Hour}) =>
+      'Your ${formatClock(scheduled, use24Hour: use24Hour)} alarm ${_rangAnd()}';
+
+  String _rangAnd() => started
+      ? 'rang for $rangText. The questions were not finished.'
+      : 'rang for $rangText and was not answered.';
+
+  Map<String, Object?> toJson() => {
+    'alarmId': alarmId,
+    'label': label,
+    'scheduled': scheduled.millisecondsSinceEpoch,
+    'rangSeconds': rangSeconds,
+    'started': started,
+    'volume': volume,
+    'vibrate': vibrate,
+  };
+
+  factory TimedOutRing.fromJson(Map<String, dynamic> j) => TimedOutRing(
+    alarmId: j['alarmId'] as int,
+    label: (j['label'] as String?) ?? '',
+    scheduled: DateTime.fromMillisecondsSinceEpoch(j['scheduled'] as int),
+    rangSeconds: (j['rangSeconds'] as num?)?.toInt() ?? 0,
+    started: j['started'] == true,
+    volume: (j['volume'] as num?)?.toDouble() ?? 1.0,
+    vibrate: j['vibrate'] != false,
+  );
+}
+
+/// One ring that is sounding now, watched so that it cannot ring for ever.
+class _RingWatch {
+  final AlarmItem alarm;
+  final DateTime startedAt;
+
+  /// A simulator test ring: stops quietly, leaves no "missed" record.
+  bool isTest;
+
+  /// True once the user began answering.
+  bool started = false;
+  int answered = 0;
+  Timer? timer;
+  _RingWatch(this.alarm, this.startedAt, {required this.isTest});
+}
+
 class AlarmProvider extends ChangeNotifier {
   final AlarmBackend backend;
+
+  /// A ringing alarm nobody touches stops by itself after this long.
+  static const Duration untouchedRingLimit = Duration(minutes: 10);
+
+  /// Once the questions were started: it stops after this long without
+  /// an answer, a tap or a keystroke.
+  static const Duration idleRingLimit = Duration(minutes: 15);
+
+  /// Shows the "Missed alarm" notification (replaced in tests).
+  static Future<bool> Function({
+    required int id,
+    required String title,
+    required String body,
+  })
+  showNotice = SystemBridge.showNotice;
+
+  /// The two limits and the clock of this provider (tests shorten them).
+  final Duration untouchedLimit;
+  final Duration idleLimit;
+  final DateTime Function() _now;
 
   List<AlarmItem> alarms = [];
   bool isAlarmRinging = false;
@@ -143,8 +248,13 @@ class AlarmProvider extends ChangeNotifier {
     _showNextWaiting();
   }
 
-  AlarmProvider({AlarmBackend? backend})
-    : backend = backend ?? AlarmBackend.forPlatform() {
+  AlarmProvider({
+    AlarmBackend? backend,
+    this.untouchedLimit = untouchedRingLimit,
+    this.idleLimit = idleRingLimit,
+    DateTime Function()? clock,
+  }) : backend = backend ?? AlarmBackend.forPlatform(),
+       _now = clock ?? DateTime.now {
     _loadAlarms().then((_) => unawaited(refillQuestionBank()));
     _ringSubscription = this.backend.rings.listen(_onRing);
     SyncService.onAlarmsRestored = _loadAlarms;
@@ -252,6 +362,7 @@ class AlarmProvider extends ChangeNotifier {
         );
     _ringingIds.putIfAbsent(matched.id, () => {}).add(ring.id);
     final isTest = known != null && ring.id == _slotId(known, _testSlot);
+    _watchRing(matched, isTest: isTest);
     if (!isTest) {
       final isSnooze = known != null && ring.id == _slotId(known, _snoozeSlot);
       // A fresh ring (not a snooze coming back) starts the count again.
@@ -302,6 +413,178 @@ class AlarmProvider extends ChangeNotifier {
   void ringScreenClosed() {
     isAlarmRinging = false;
     _showNextWaiting();
+    // The home screen may now ask about a ring that was not answered.
+    if (!isAlarmRinging && (timedOut.isNotEmpty || missed.isNotEmpty)) {
+      notifyListeners();
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // A ring nobody answers stops by itself: [untouchedLimit] after it
+  // started, or, once the questions were started, [idleLimit] after the
+  // last sign of life from the ring screen. It lives here, not in the
+  // ring screen, so it works whenever the app is alive at all.
+  // ------------------------------------------------------------------
+  static const String _timedOutPref = 'alarm_timed_out';
+
+  /// Rings that stopped unanswered and have not been talked about yet;
+  /// the home screen asks about each and then calls [timedOutHandled].
+  final List<TimedOutRing> timedOut = [];
+
+  final Map<int, _RingWatch> _watches = {};
+  final StreamController<int> _timeouts = StreamController<int>.broadcast();
+
+  /// The id of each alarm that stopped by itself, at the moment it does.
+  /// The ring screen closes on it.
+  Stream<int> get ringTimeouts => _timeouts.stream;
+
+  void _watchRing(AlarmItem alarm, {required bool isTest}) {
+    final watch = _watches[alarm.id];
+    if (watch != null) {
+      // Another registration of an alarm that is ringing already.
+      watch.isTest = watch.isTest && isTest;
+      return;
+    }
+    _watches[alarm.id] = _RingWatch(alarm, _now(), isTest: isTest)
+      ..timer = Timer(untouchedLimit, () => _ringTimedOut(alarm.id));
+  }
+
+  void _stopWatching(int alarmId) => _watches.remove(alarmId)?.timer?.cancel();
+
+  /// The ring screen calls this for every sign of life while [alarmId]
+  /// rings. With [attempt] (an option tapped, text typed, an answer given)
+  /// the questions count as started and the idle limit applies from then
+  /// on; any other tap only counts once they were started. [answered] is
+  /// for an answer that was submitted.
+  void noteRingActivity(
+    int alarmId, {
+    bool attempt = true,
+    bool answered = false,
+  }) {
+    final watch = _watches[alarmId];
+    if (watch == null) return;
+    if (answered) watch.answered++;
+    if (!attempt && !watch.started) return;
+    watch.started = true;
+    watch.timer?.cancel();
+    watch.timer = Timer(idleLimit, () => _ringTimedOut(alarmId));
+  }
+
+  Future<void> _ringTimedOut(int alarmId) async {
+    final watch = _watches.remove(alarmId);
+    if (watch == null) return;
+    watch.timer?.cancel();
+    final inList = alarms.any((a) => a.id == alarmId);
+    final alarm = alarms.firstWhere(
+      (a) => a.id == alarmId,
+      orElse: () => watch.alarm,
+    );
+    final rang = _now().difference(watch.startedAt).inSeconds;
+    final volume = effectiveVolume(alarm);
+    try {
+      await _silence(alarm);
+    } catch (e) {
+      debugPrint('Stopping the unanswered alarm $alarmId failed: $e');
+      await forceStop(alarm);
+    }
+    _waiting.removeWhere((a) => a.id == alarmId);
+    if (watch.isTest) {
+      _timeouts.add(alarmId); // a test ring: just close, nothing was missed
+      return;
+    }
+    final start = watch.startedAt;
+    final record = TimedOutRing(
+      alarmId: alarmId,
+      label: alarm.label,
+      scheduled: inList
+          ? DateTime(
+              start.year,
+              start.month,
+              start.day,
+              alarm.time.hour,
+              alarm.time.minute,
+            )
+          : start,
+      rangSeconds: rang,
+      started: watch.started,
+      volume: volume,
+      vibrate: alarm.vibrate,
+    );
+    timedOut.add(record);
+    _timeouts.add(alarmId);
+    unawaited(
+      AlarmLog.add(
+        'timed_out',
+        alarmId: alarmId,
+        detail: {
+          'rang_seconds': rang,
+          'started': watch.started,
+          'volume': volume,
+          'answered': watch.answered,
+        },
+      ),
+    );
+    await _saveTimedOut();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      unawaited(
+        showNotice(
+          id: alarmId,
+          title: 'Missed alarm',
+          body: record.noticeBody(
+            use24Hour: prefs.getBool('use24Hour') ?? false,
+          ),
+        ).catchError((Object _) => false),
+      );
+    } catch (e) {
+      debugPrint('Could not show the missed-alarm notice: $e');
+    }
+    try {
+      // Nothing of this ring may come back: not a snooze either.
+      if (inList) await _cancel(_slotId(alarm, _snoozeSlot));
+      await _afterRingEnded(alarm, inList: inList);
+    } catch (e) {
+      debugPrint('Could not tidy up after alarm $alarmId: $e');
+    }
+    notifyListeners();
+  }
+
+  Future<void> _saveTimedOut() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _timedOutPref,
+        jsonEncode([for (final r in timedOut) r.toJson()]),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _loadTimedOut(SharedPreferences prefs) async {
+    try {
+      final saved = [
+        for (final e
+            in jsonDecode(prefs.getString(_timedOutPref) ?? '[]') as List)
+          TimedOutRing.fromJson((e as Map).cast<String, dynamic>()),
+      ];
+      timedOut
+        ..clear()
+        ..addAll(saved);
+    } catch (e) {
+      debugPrint('Unanswered rings unreadable: $e');
+    }
+  }
+
+  /// The user has been asked about [ring]: it is not brought up again.
+  Future<void> timedOutHandled(TimedOutRing ring) async {
+    // By value: the list may have been read from storage again meanwhile.
+    timedOut.removeWhere(
+      (r) =>
+          r.alarmId == ring.alarmId &&
+          r.scheduled == ring.scheduled &&
+          r.rangSeconds == ring.rangSeconds,
+    );
+    await _saveTimedOut();
+    notifyListeners();
   }
 
   Future<AlarmRequest> _request(
@@ -718,6 +1001,7 @@ class AlarmProvider extends ChangeNotifier {
   /// Stops every registration of [alarm], whatever state it is in. The
   /// ring screen's last resort when a normal dismissal fails.
   Future<void> forceStop(AlarmItem alarm) async {
+    _stopWatching(alarm.id);
     _ringingIds.remove(alarm.id);
     for (final id in [
       alarm.id,
@@ -915,6 +1199,7 @@ class AlarmProvider extends ChangeNotifier {
         debugPrint('Could not cancel alarm ${a.id}: $e');
       }
       _ringingIds.remove(a.id);
+      _stopWatching(a.id);
       await _takeExpected(a.id);
       await SystemBridge.cancelPreAlarm(a.id);
       unawaited(AlarmLog.add('deleted', alarmId: a.id));
@@ -926,6 +1211,7 @@ class AlarmProvider extends ChangeNotifier {
   /// Silences whatever of [alarm] is ringing. Returns the system ids that
   /// were ringing.
   Future<Set<int>> _silence(AlarmItem alarm) async {
+    _stopWatching(alarm.id); // answered, snoozed or given up on
     final ringing = _ringingIds.remove(alarm.id) ?? <int>{};
     if (ringing.isEmpty && alarms.any((a) => a.id == alarm.id)) {
       // Not told which registration rang (should not happen): find it.
@@ -956,6 +1242,14 @@ class AlarmProvider extends ChangeNotifier {
         detail: {'snoozes': snoozeCount(alarm.id)},
       ),
     );
+    await _afterRingEnded(alarm, inList: inList);
+    unawaited(refillQuestionBank());
+  }
+
+  /// A ring is over for good (answered, or it gave up): the snooze count
+  /// starts again, a repeating alarm is put back for next week and a
+  /// ring-once alarm is finished.
+  Future<void> _afterRingEnded(AlarmItem alarm, {required bool inList}) async {
     await _setSnoozeCount(alarm.id, 0);
     if (inList && alarm.isEnabled && alarm.activeDays.isNotEmpty) {
       // Registers the weekday that just rang for next week; the other
@@ -978,7 +1272,6 @@ class AlarmProvider extends ChangeNotifier {
       }
       await saveAlarms();
     }
-    unawaited(refillQuestionBank());
   }
 
   /// Silences [alarm] and rings it again after its own snooze length.
@@ -1030,8 +1323,12 @@ class AlarmProvider extends ChangeNotifier {
   Future<void> _loadAlarms() async {
     try {
       final prefs = await SharedPreferences.getInstance();
+      await _loadTimedOut(prefs);
       final raw = prefs.getString('saved_alarms');
-      if (raw == null) return;
+      if (raw == null) {
+        if (timedOut.isNotEmpty) notifyListeners();
+        return;
+      }
 
       final loadedAlarms = <AlarmItem>[];
       try {
@@ -1117,6 +1414,11 @@ class AlarmProvider extends ChangeNotifier {
   void dispose() {
     Entitlements.instance.removeListener(_planChanged);
     _ringSubscription?.cancel();
+    for (final w in _watches.values) {
+      w.timer?.cancel();
+    }
+    _watches.clear();
+    _timeouts.close();
     super.dispose();
   }
 }

@@ -142,7 +142,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _askAboutMissed() async {
     if (!mounted || _askingMissed || _gateOpen) return;
     final provider = Provider.of<AlarmProvider>(context, listen: false);
-    if (provider.missed.isEmpty || provider.isAlarmRinging) return;
+    if (provider.isAlarmRinging) return;
+    if (provider.timedOut.isNotEmpty) {
+      // It rang but was not answered: find out why (clears the record).
+      _askingMissed = true;
+      await showTimedOutPrompt(context, provider.timedOut.first);
+      _askingMissed = false;
+      _askAboutMissed(); // the next one, if any
+      return;
+    }
+    if (provider.missed.isEmpty) return;
     _askingMissed = true;
     final ring = provider.missed.first;
     await showAlarmFeedback(context, missed: ring);
@@ -499,6 +508,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 listenable: Entitlements.instance,
                 builder: (context, _) => Entitlements.instance.needsCheck
                     ? const PlanCheckBanner()
+                    : Entitlements.instance.endsSoon
+                    ? const PlanEndingBanner()
                     : const SizedBox.shrink(),
               ),
               Expanded(

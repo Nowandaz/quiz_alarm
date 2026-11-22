@@ -17,6 +17,7 @@ import 'services/entitlements.dart';
 import 'services/profile_picture.dart';
 import 'services/sync_service.dart';
 import 'services/theme_provider.dart';
+import 'services/usage_ping.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
@@ -35,9 +36,19 @@ Future<void> main() async {
   await plan.load();
   plan.refresh();
 
-  // The profile picture of whoever is signed in (kept on this phone).
+  // The profile picture of whoever is signed in: this phone's copy at
+  // once, then brought in line with the account's copy on the server.
+  Future<void> picture() async {
+    await ProfilePicture.load();
+    await ProfilePicture.sync();
+  }
+
   await ProfilePicture.load();
-  Account.instance.addListener(ProfilePicture.load);
+  ProfilePicture.sync();
+  Account.instance.addListener(picture);
+
+  // The anonymous "this phone uses the app" note (once a day at most).
+  UsagePing.send();
 
   // Syncing with the server: at start, shortly after anything of the
   // user's changes, and when they sign in or out.
@@ -57,6 +68,7 @@ Future<void> main() async {
     if (plan.level == level) return;
     level = plan.level;
     SyncService.schedule(const Duration(seconds: 1));
+    UsagePing.send();
   });
   SyncService.schedule(const Duration(seconds: 3));
 

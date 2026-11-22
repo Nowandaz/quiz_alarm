@@ -4,6 +4,7 @@
 library;
 
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../screens/account_screen.dart';
@@ -141,6 +142,131 @@ Future<void> checkPlanNow(BuildContext context) async {
       ),
     ),
   );
+}
+
+/// The banner on the home screen in the last days of a paid plan
+/// ([Entitlements.endsSoon]): when it ends, and a way to renew. Its close
+/// button hides it until the next calendar day.
+class PlanEndingBanner extends StatefulWidget {
+  const PlanEndingBanner({super.key});
+
+  /// Holds the day (yyyy-mm-dd) on which the banner was closed.
+  static const String dismissedPref = 'plan_ending_dismissed';
+
+  /// "Your Pro ends in 3 days." and the like, by calendar day.
+  static String message(Entitlements plan) {
+    final name = plan.planName;
+    final end = plan.expires;
+    final now = plan.time;
+    if (end == null) return 'Your $name ends soon.';
+    if (!now.isBefore(end)) return 'Your $name has ended.';
+    final days = DateTime(
+      end.year,
+      end.month,
+      end.day,
+    ).difference(DateTime(now.year, now.month, now.day)).inHours;
+    // Rounded, so a day of 23 or 25 hours (clock change) counts as one.
+    return switch ((days / 24).round()) {
+      0 => 'Your $name ends today.',
+      1 => 'Your $name ends tomorrow.',
+      final n => 'Your $name ends in $n days.',
+    };
+  }
+
+  @override
+  State<PlanEndingBanner> createState() => _PlanEndingBannerState();
+}
+
+class _PlanEndingBannerState extends State<PlanEndingBanner> {
+  // Hidden until it is known whether it was closed today.
+  bool _hidden = true;
+
+  static String _today() {
+    final t = Entitlements.instance.time;
+    return '${t.year}-${t.month.toString().padLeft(2, '0')}-'
+        '${t.day.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    var closed = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      closed = prefs.getString(PlanEndingBanner.dismissedPref) == _today();
+    } catch (_) {}
+    if (mounted) setState(() => _hidden = closed);
+  }
+
+  Future<void> _close() async {
+    setState(() => _hidden = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(PlanEndingBanner.dismissedPref, _today());
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_hidden) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final ink = scheme.onSecondaryContainer;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.fromLTRB(14, 10, 2, 10),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.event_rounded, color: ink),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Follows the plan: the day count changes under it.
+                ListenableBuilder(
+                  listenable: Entitlements.instance,
+                  builder: (context, _) => Text(
+                    PlanEndingBanner.message(Entitlements.instance),
+                    style: TextStyle(
+                      color: ink,
+                      fontWeight: FontWeight.w700,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+                Text(
+                  'Plans do not renew by themselves.',
+                  style: TextStyle(
+                    color: ink.withValues(alpha: 0.8),
+                    fontSize: 13,
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () => showUpgrade(context),
+            child: const Text('Renew'),
+          ),
+          IconButton(
+            tooltip: 'Hide until tomorrow',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close_rounded, size: 20, color: ink),
+            onPressed: _close,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// The banner on the home screen while a paid plan cannot be confirmed.

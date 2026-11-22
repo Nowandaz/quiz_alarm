@@ -78,6 +78,7 @@ class _SessionScreenState extends State<SessionScreen> {
                         _line('Result', switch (s.outcome) {
                           'dismissed' => 'Dismissed',
                           'snoozed' => 'Snoozed',
+                          'timed_out' => 'Not answered',
                           _ => 'Not finished',
                         }),
                       if (s.kind == 'alarm' && s.requiredStreak != null)

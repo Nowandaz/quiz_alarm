@@ -11,6 +11,7 @@ import 'package:quiz_alarm/data/question_repository.dart';
 import 'package:quiz_alarm/models/models.dart';
 import 'package:quiz_alarm/services/account.dart';
 import 'package:quiz_alarm/services/ai_client.dart';
+import 'package:quiz_alarm/services/profile_picture.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -90,6 +91,7 @@ void main() {
         prefs: {
           'saved_alarms': '[{"id":123456,"hour":6,"minute":30}]',
           'sync_backup_hash': 'abc',
+          'profile_picture:test-user': base64Encode([0xFF, 0xD8, 1, 2]),
         },
       );
       await useTheApp();
@@ -98,6 +100,14 @@ void main() {
       var notified = 0;
       void listener() => notified++;
       account.addListener(listener);
+      // A profile picture, here and on the server.
+      await ProfilePicture.load();
+      expect(ProfilePicture.current.value, isNotNull);
+      final pictureCalls = <String>[];
+      ProfilePicture.httpClient = MockClient((request) async {
+        pictureCalls.add('${request.method} ${request.url.path}');
+        return http.Response('{}', 200);
+      });
 
       final calls = <http.Request>[];
       Account.httpClient = MockClient((request) async {
@@ -113,6 +123,18 @@ void main() {
       expect(call.headers['apikey'], isNotEmpty);
       expect(call.headers['Authorization'], 'Bearer test-token');
       expect(call.body, '{}');
+
+      // The picture went from the server and from this phone.
+      expect(pictureCalls, [
+        'DELETE /storage/v1/object/avatars/test-user/avatar.jpg',
+      ]);
+      expect(ProfilePicture.current.value, isNull);
+      expect(
+        (await SharedPreferences.getInstance()).getString(
+          'profile_picture:test-user',
+        ),
+        isNull,
+      );
 
       // Signed out (which is what brings up the sign-in screen), without
       // a sign-out call for an account that no longer exists.
@@ -148,13 +170,28 @@ void main() {
     });
 
     test('a refusal from the server changes nothing', () async {
-      await resetApp(signedIn: true);
+      await resetApp(
+        signedIn: true,
+        prefs: {
+          'profile_picture:test-user': base64Encode([0xFF, 0xD8, 1, 2]),
+        },
+      );
+      await ProfilePicture.load();
       await useTheApp();
       Account.httpClient = MockClient(
         (_) async => http.Response('{"message":"Not allowed"}', 403),
       );
       expect(await account.deleteAccount(), 'Not allowed');
       expect(account.isSignedIn, isTrue);
+      // The account stays, so its picture is sent to the server again.
+      final sent = <String>[];
+      ProfilePicture.httpClient = MockClient((request) async {
+        sent.add(request.method);
+        return http.Response('{}', 200);
+      });
+      await ProfilePicture.sync();
+      expect(sent, ['POST']);
+      expect(ProfilePicture.current.value, isNotNull);
       expect((await QuestionRepository.getReport()).answered, 1);
     });
 
@@ -222,9 +259,21 @@ void main() {
     Account.httpClient = MockClient((request) async {
       expect(request.url.path, '/auth/v1/signup');
       expect(request.url.queryParameters['redirect_to'], 'brainwake://auth');
+      // Agreeing to the terms is recorded with the account.
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['email'], 'me@example.com');
+      expect(body['password'], 'secret1');
+      expect(body['data'], {
+        'terms_accepted_at': '2026-11-22T09:30:00.000Z',
+        'terms_version': '2026-11-22',
+      });
       return http.Response('{"id":"user-1","email":"me@example.com"}', 200);
     });
-    final result = await account.signUp('me@example.com', 'secret1');
+    final result = await account.signUp(
+      'me@example.com',
+      'secret1',
+      now: DateTime.utc(2026, 11, 22, 9, 30),
+    );
     expect(result.error, isNull);
     expect(result.needsConfirmation, isTrue);
     expect(account.isSignedIn, isFalse);

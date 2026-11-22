@@ -2,7 +2,10 @@ package com.example.quiz_alarm
 
 import android.app.ActivityManager
 import android.app.KeyguardManager
+import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
@@ -40,6 +43,7 @@ import io.flutter.plugin.common.MethodChannel
  *    in power saving mode) and the quiz may show over the lock screen. At
  *    every other time the app stays BEHIND the lock screen like any other
  *    app, so a locked phone does not give access to the account.
+ *  - showNotice: a plain notification (a missed alarm).
  *  - uninstallProtectionOn / requestUninstallProtection /
  *    removeUninstallProtection: the optional "cannot be uninstalled while
  *    an alarm rings" switch (see AdminReceiver).
@@ -150,6 +154,53 @@ class MainActivity : FlutterActivity() {
                             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                         }
                         result.success(null)
+                    }
+                    "showNotice" -> {
+                        // A plain notification ("Missed alarm: rang for 10
+                        // minutes"). Tapping it opens the app.
+                        try {
+                            val manager =
+                                getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                            val channelId = "alarm_notices"
+                            if (Build.VERSION.SDK_INT >= 26) {
+                                manager.createNotificationChannel(
+                                    NotificationChannel(
+                                        channelId, "Missed alarms",
+                                        NotificationManager.IMPORTANCE_DEFAULT
+                                    )
+                                )
+                            }
+                            val title = call.argument<String>("title") ?: ""
+                            val body = call.argument<String>("body") ?: ""
+                            val launch = packageManager.getLaunchIntentForPackage(packageName)
+                            val builder = if (Build.VERSION.SDK_INT >= 26) {
+                                Notification.Builder(applicationContext, channelId)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                Notification.Builder(applicationContext)
+                            }
+                            builder
+                                .setSmallIcon(applicationInfo.icon)
+                                .setContentTitle(title)
+                                .setContentText(body)
+                                .setStyle(Notification.BigTextStyle().bigText(body))
+                                .setAutoCancel(true)
+                            if (launch != null) {
+                                builder.setContentIntent(
+                                    PendingIntent.getActivity(
+                                        applicationContext, 0, launch,
+                                        PendingIntent.FLAG_UPDATE_CURRENT or
+                                            PendingIntent.FLAG_IMMUTABLE
+                                    )
+                                )
+                            }
+                            manager.notify(
+                                900000 + (call.argument<Int>("id") ?: 0), builder.build()
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
                     }
                     "uninstallProtectionOn" -> {
                         result.success(

@@ -86,12 +86,18 @@ void main() {
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
     );
     await ProfilePicture.load();
+    final sent = <String>[];
+    ProfilePicture.httpClient = MockClient((request) async {
+      sent.add(request.method);
+      return http.Response('{}', 200);
+    });
     await show(tester);
     await open(tester, 'Account');
     expect(find.textContaining('Tap to add a profile picture'), findsOneWidget);
 
     await tester.tap(find.textContaining('Tap to add a profile picture'));
     await tester.pumpAndSettle();
+    expect(find.text('Saved with your account.'), findsOneWidget);
     await tester.runAsync(() async {
       await tester.tap(find.text('Choose a photo'));
       await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -102,9 +108,14 @@ void main() {
 
     await tester.tap(find.textContaining('Tap to change your picture'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Remove picture'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Remove picture'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
     await tester.pumpAndSettle();
     expect(ProfilePicture.current.value, isNull);
+    // Both changes reached the account's copy on the server.
+    expect(sent, ['POST', 'DELETE']);
   });
 
   testWidgets('"What is stored" and "AI question generation" are gone', (

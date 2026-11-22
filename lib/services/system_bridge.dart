@@ -77,6 +77,27 @@ class SystemBridge {
     }
   }
 
+  /// Shows a plain notification (for example "Missed alarm"). Tapping it
+  /// opens the app. [id] keeps notices of different alarms apart.
+  static Future<bool> showNotice({
+    required int id,
+    required String title,
+    required String body,
+  }) async {
+    if (!_android) return false;
+    try {
+      return (await _channel.invokeMethod<bool>('showNotice', {
+            'id': id,
+            'title': title,
+            'body': body,
+          })) ??
+          false;
+    } catch (e) {
+      debugPrint('showNotice failed: $e');
+      return false;
+    }
+  }
+
   /// Whether "cannot be uninstalled" protection is switched on (the app
   /// is a device admin app).
   static Future<bool> uninstallProtectionOn() =>

@@ -128,6 +128,7 @@ class SessionCard extends StatelessWidget {
     final outcome = switch (s.outcome) {
       'dismissed' => 'Dismissed',
       'snoozed' => 'Snoozed',
+      'timed_out' => 'Not answered',
       'finished' => null,
       _ => s.kind == 'alarm' ? 'Not finished' : null,
     };

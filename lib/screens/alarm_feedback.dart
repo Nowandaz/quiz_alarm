@@ -15,6 +15,10 @@ import '../services/server_config.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 
+// The prompt for an alarm that rang unanswered lives next door; the home
+// screen gets both flows from this file.
+export 'missed_alarm_sheet.dart' show showTimedOutPrompt;
+
 /// The choices offered under "What happened?" (code sent to the server,
 /// text shown).
 const Map<String, String> alarmProblems = {
@@ -107,23 +111,27 @@ Future<Map<String, Object?>> collectAlarmDiagnostics(
 
 /// Shows the feedback flow. With [missed] it is about a ring the app
 /// believes never happened; without, the user opened it from Settings and
-/// picks the alarm themselves.
+/// picks the alarm themselves. [alarmId], [problem] and [scheduled] fill
+/// that form in beforehand (used after an alarm rang unanswered and the
+/// user says it made no sound).
 Future<void> showAlarmFeedback(
   BuildContext context, {
   MissedRing? missed,
+  int? alarmId,
+  String? problem,
+  DateTime? scheduled,
 }) async {
   final provider = context.read<AlarmProvider>();
   final use24 = context.read<ThemeProvider>().use24Hour;
   final messenger = ScaffoldMessenger.of(context);
 
   AlarmItem? alarm;
-  if (missed != null) {
-    for (final a in provider.alarms) {
-      if (a.id == missed.alarmId) alarm = a;
-    }
+  final wanted = missed?.alarmId ?? alarmId;
+  for (final a in provider.alarms) {
+    if (a.id == wanted) alarm = a;
   }
+  scheduled = missed?.scheduled ?? scheduled;
   var step = missed != null ? 0 : 1; // 0 = did it ring?, 1 = what happened?
-  String? problem;
   final note = TextEditingController();
 
   final sent = await showModalBottomSheet<String>(
@@ -284,7 +292,7 @@ Future<void> showAlarmFeedback(
   }
   await AlarmLog.add(
     'report',
-    alarmId: alarm?.id ?? missed?.alarmId,
+    alarmId: alarm?.id ?? wanted,
     urgent: true,
     detail: {
       'rang': false,
@@ -293,7 +301,7 @@ Future<void> showAlarmFeedback(
       'diagnostics': await collectAlarmDiagnostics(
         provider,
         alarm: alarm,
-        scheduled: missed?.scheduled,
+        scheduled: scheduled,
       ),
     },
   );

@@ -75,6 +75,50 @@ void main() {
     expect(plan.needsCheck, isFalse);
   });
 
+  test('days left are whole days, rounded up; "ends soon" is three days '
+      'or less', () async {
+    await start(signedIn: false);
+    expect(plan.daysLeft, isNull);
+    expect(plan.endsSoon, isFalse);
+
+    await start();
+    expect(plan.daysLeft, isNull); // free
+    await buy(); // no end date
+    expect(plan.daysLeft, isNull);
+    expect(plan.endsSoon, isFalse);
+
+    final end = clock.add(const Duration(days: 30));
+    await buy(expires: end);
+    expect(plan.daysLeft, 30);
+    expect(plan.endsSoon, isFalse);
+
+    clock = end.subtract(const Duration(days: 3, minutes: 1));
+    expect(plan.daysLeft, 4);
+    expect(plan.endsSoon, isFalse);
+
+    clock = end.subtract(const Duration(days: 3));
+    expect(plan.daysLeft, 3);
+    expect(plan.endsSoon, isTrue);
+
+    clock = end.subtract(const Duration(hours: 25));
+    expect(plan.daysLeft, 2);
+    clock = end.subtract(const Duration(minutes: 1));
+    expect(plan.daysLeft, 1);
+    expect(plan.endsSoon, isTrue);
+
+    // Past the end, offline: still open, still "ends soon".
+    clock = end.add(const Duration(days: 1));
+    expect(plan.endingOffline, isTrue);
+    expect(plan.daysLeft, 0);
+    expect(plan.endsSoon, isTrue);
+
+    // Locked: nothing to announce (the "needs checking" banner shows).
+    clock = end.add(const Duration(days: 3, minutes: 1));
+    expect(plan.needsCheck, isTrue);
+    expect(plan.daysLeft, isNull);
+    expect(plan.endsSoon, isFalse);
+  });
+
   test('the plan is remembered across a restart', () async {
     await start();
     await buy(expires: clock.add(const Duration(days: 30)));
