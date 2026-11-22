@@ -1,22 +1,24 @@
-/// Reports tab: how you are doing over time (trends against the weeks
-/// before), which topics are weak (tap one to practise it), how long
-/// alarms take to dismiss, and the history of every alarm and practice
-/// session (tap one to see its questions and explanations).
+/// Reports tab: overall accuracy, trends against the weeks before, how
+/// long alarms take to dismiss, and three short rows that open the rest:
+/// "Needs revision" drops down in place, "By topic" and "History" open
+/// their own screens. Trends and the topic figures are part of the paid
+/// plans; everything else is open to everyone.
 library;
 
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:provider/provider.dart';
 
 import '../../data/question_repository.dart';
 import '../../models/models.dart';
+import '../../services/entitlements.dart';
 import '../../services/question_service.dart';
-import '../../services/theme_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_widgets.dart';
 import '../../widgets/coach_tour.dart';
+import '../history_screen.dart';
 import '../practice_setup.dart';
-import '../session_screen.dart';
+import '../topic_stats_screen.dart';
+import '../upgrade_screen.dart';
 
 /// "1m 20s", "45s" or "2h 5m".
 String formatDuration(Duration d) {
@@ -34,8 +36,8 @@ class ReportsTab extends StatefulWidget {
 
 class _ReportsTabState extends State<ReportsTab> {
   ReportSummary? _report;
-  List<StudySession> _sessions = [];
-  String? _kind; // null = all
+  int _sessionCount = 0;
+  bool _revisionOpen = false; // "Needs revision" starts folded away
   String? _error;
 
   @override
@@ -54,11 +56,11 @@ class _ReportsTabState extends State<ReportsTab> {
   Future<void> _load() async {
     try {
       final report = await QuestionRepository.getReport();
-      final sessions = await QuestionRepository.getSessions(kind: _kind);
+      final sessions = await HistoryScreen.countSessions();
       if (!mounted) return;
       setState(() {
         _report = report;
-        _sessions = sessions;
+        _sessionCount = sessions;
         _error = null;
       });
     } catch (e) {
@@ -67,9 +69,17 @@ class _ReportsTabState extends State<ReportsTab> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    // The plan can change while the tab is open (upgrade, expiry).
+    listenable: Entitlements.instance,
+    builder: (context, _) => _build(context),
+  );
+
+  Widget _build(BuildContext context) {
     final theme = Theme.of(context);
     final report = _report;
+    final open = Entitlements.instance.canSeeTrends;
+    final revision = report?.trends.needsRevision ?? const <TopicTrend>[];
     if (_error != null) {
       return Center(
         child: Padding(
@@ -133,8 +143,11 @@ class _ReportsTabState extends State<ReportsTab> {
               ],
             ),
           ),
-          // Hidden until there is something to compare.
-          if (report.answered > 0) ...[
+          // A paid feature. Hidden until there is something to compare.
+          if (!open) ...[
+            const SizedBox(height: 12),
+            const TrendsLockedCard(),
+          ] else if (report.answered > 0) ...[
             const SizedBox(height: 12),
             _TrendsCard(trends: report.trends),
           ],
@@ -183,65 +196,135 @@ class _ReportsTabState extends State<ReportsTab> {
             ),
           ),
           const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('By topic', style: theme.textTheme.titleMedium),
-                  Text(
-                    report.topics.isEmpty
-                        ? 'Weakest first.'
-                        : 'Weakest first. Tap a topic to practise it.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 8),
-                  if (report.topics.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Text('Nothing answered yet.'),
+          if (revision.isNotEmpty)
+            _RowCard(
+              icon: Icons.flag_circle_outlined,
+              title: 'Needs revision',
+              detail: plural(revision.length, 'topic'),
+              trailing: _revisionOpen
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded,
+              onTap: () => setState(() => _revisionOpen = !_revisionOpen),
+              below: !_revisionOpen
+                  ? null
+                  : Column(
+                      children: [
+                        for (final topic in revision)
+                          _RevisionRow(topic: topic, figures: open),
+                      ],
                     ),
-                  for (final (i, t) in report.topics.indexed)
-                    // The weakest topic carries the "Practise" label; the
-                    // chevrons say the rest work the same way.
-                    _TopicRow(topic: t, weakest: i == 0),
-                ],
-              ),
+            ),
+          _RowCard(
+            icon: Icons.topic_outlined,
+            title: 'By topic',
+            detail: plural(report.topics.length, 'topic'),
+            trailing: open ? Icons.chevron_right_rounded : Icons.lock_rounded,
+            onTap: () => open
+                ? Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                      builder: (_) => TopicStatsScreen(topics: report.topics),
+                    ),
+                  )
+                : showUpgrade(context),
+          ),
+          _RowCard(
+            icon: Icons.history_rounded,
+            title: 'History',
+            detail: plural(_sessionCount, 'session'),
+            trailing: Icons.chevron_right_rounded,
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const HistoryScreen()),
             ),
           ),
-          const SizedBox(height: 22),
-          Text('History', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final (key, label) in const [
-                ('all', 'All'),
-                ('alarm', 'Alarms'),
-                ('practice', 'Practice'),
-              ])
-                ChoiceChip(
-                  label: Text(label),
-                  selected: (_kind ?? 'all') == key,
-                  showCheckmark: false,
-                  onSelected: (_) {
-                    _kind = key == 'all' ? null : key;
-                    _load();
-                  },
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (_sessions.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Text(
-                'No sessions yet. Alarms and practice sessions appear here.',
-              ),
-            ),
-          for (final s in _sessions) _SessionCard(session: s),
         ],
+      ),
+    );
+  }
+}
+
+/// One tappable line of the Reports page: "By topic - 14 topics >".
+/// [below] is shown under it inside the same card (the dropped-down
+/// part of "Needs revision").
+class _RowCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String detail;
+  final IconData trailing;
+  final VoidCallback onTap;
+  final Widget? below;
+  const _RowCard({
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.trailing,
+    required this.onTap,
+    this.below,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          ListTile(
+            leading: Icon(icon),
+            title: Text(title, style: theme.textTheme.titleMedium),
+            subtitle: Text(detail),
+            trailing: Icon(trailing),
+            onTap: onTap,
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            alignment: Alignment.topCenter,
+            child: below == null
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 12, 10),
+                    child: below,
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A topic that did badly in the last 14 days. Tapping it opens practice
+/// for it. The figures are left out on plans without them.
+class _RevisionRow extends StatelessWidget {
+  final TopicTrend topic;
+  final bool figures;
+  const _RevisionRow({required this.topic, required this.figures});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => showPracticeSetup(
+        context,
+        initialTopics: {topic.id},
+        title: topic.topic,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        child: Row(
+          children: [
+            Expanded(child: Text(topic.topic)),
+            if (figures)
+              Text(
+                '${(topic.accuracy * 100).round()}%  '
+                '(${topic.correct}/${topic.answered})',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            const SizedBox(width: 6),
+            const PractiseHint(),
+          ],
+        ),
       ),
     );
   }
@@ -389,82 +472,6 @@ class _DayChart extends StatelessWidget {
   }
 }
 
-/// Opens the practice set-up with one topic ticked.
-void _practise(BuildContext context, String topicId, String name) =>
-    showPracticeSetup(context, initialTopics: {topicId}, title: name);
-
-/// "Practise" and a chevron: marks a row as something to tap.
-class _PractiseHint extends StatelessWidget {
-  final bool label;
-  const _PractiseHint({this.label = true});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (label)
-          Text(
-            'Practise',
-            style: TextStyle(
-              color: scheme.primary,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
-          ),
-        Icon(
-          Icons.chevron_right_rounded,
-          size: 20,
-          color: scheme.onSurfaceVariant,
-        ),
-      ],
-    );
-  }
-}
-
-/// All-time accuracy on one topic. Tapping it opens practice for it.
-class _TopicRow extends StatelessWidget {
-  final TopicAccuracy topic;
-  final bool weakest;
-  const _TopicRow({required this.topic, this.weakest = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: () => _practise(context, topic.id, topic.topic),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(child: Text(topic.topic)),
-                Text(
-                  '${(topic.accuracy * 100).round()}%  '
-                  '(${topic.correct}/${topic.answered})',
-                  style: theme.textTheme.bodySmall,
-                ),
-                const SizedBox(width: 6),
-                _PractiseHint(label: weakest),
-              ],
-            ),
-            const SizedBox(height: 4),
-            LinearProgressIndicator(
-              value: topic.accuracy,
-              minHeight: 6,
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// How the last 14 days compare with the 14 before, this week with last
 /// week, and which topics moved. A row with nothing to say is left out.
 class _TrendsCard extends StatelessWidget {
@@ -586,29 +593,6 @@ class _TrendsCard extends StatelessWidget {
                   ),
                 ),
             ],
-            if (t.needsRevision.isNotEmpty) ...[
-              heading('Needs revision'),
-              for (final topic in t.needsRevision)
-                InkWell(
-                  borderRadius: BorderRadius.circular(10),
-                  onTap: () => _practise(context, topic.id, topic.topic),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 7),
-                    child: Row(
-                      children: [
-                        Expanded(child: Text(topic.topic)),
-                        Text(
-                          '${(topic.accuracy * 100).round()}%  '
-                          '(${topic.correct}/${topic.answered})',
-                          style: small,
-                        ),
-                        const SizedBox(width: 6),
-                        const _PractiseHint(),
-                      ],
-                    ),
-                  ),
-                ),
-            ],
           ],
         ),
       ),
@@ -671,62 +655,6 @@ class _DayDot extends StatelessWidget {
           fontSize: 11,
           fontWeight: FontWeight.w800,
           color: practised ? scheme.onPrimary : scheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-}
-
-class _SessionCard extends StatelessWidget {
-  final StudySession session;
-  const _SessionCard({required this.session});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final s = session;
-    final icon = switch (s.kind) {
-      'alarm' => Icons.alarm_rounded,
-      _ => Icons.auto_stories_rounded,
-    };
-    final outcome = switch (s.outcome) {
-      'dismissed' => 'Dismissed',
-      'snoozed' => 'Snoozed',
-      'finished' => null,
-      _ => s.kind == 'alarm' ? 'Not finished' : null,
-    };
-    final parts = [
-      '${s.questions} question${s.questions == 1 ? '' : 's'}',
-      '${s.correct} correct',
-      if (s.duration != null) formatDuration(s.duration!),
-      ?outcome,
-    ];
-
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 5),
-      clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(13),
-          ),
-          child: Icon(icon, color: theme.colorScheme.onSurface, size: 22),
-        ),
-        title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${DateFormat('EEE d MMM').format(s.startedAt)}, '
-          '${formatClock(s.startedAt, use24Hour: context.watch<ThemeProvider>().use24Hour)}\n'
-          '${parts.join(' \u00b7 ')}',
-          style: theme.textTheme.bodySmall,
-        ),
-        isThreeLine: true,
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => SessionScreen(session: s)),
         ),
       ),
     );

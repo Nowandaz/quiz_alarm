@@ -47,13 +47,41 @@ class FakeServer {
         'deleted_at': deletedAt,
       });
 
-  void topic(String id, String unit) => tables['topics']!.add({
-    'id': id,
-    'unit_id': unit,
-    'name': 'Topic $id',
-    'sort_order': 0,
-    'deleted_at': null,
-  });
+  /// [access] null: a server that does not send the column yet.
+  void topic(String id, String unit, {String? access}) =>
+      tables['topics']!.add({
+        'id': id,
+        'unit_id': unit,
+        'name': 'Topic $id',
+        'sort_order': 0,
+        'deleted_at': null,
+        'access': ?access,
+      });
+
+  /// Set to make the server hand out questions as the real one does: only
+  /// those of topics open to the caller ('guest' without a sign-in,
+  /// otherwise by the profile's plan), ten per topic unless paid.
+  bool byAccess = false;
+
+  bool _mayRead(Map<String, dynamic> question, http.Request request) {
+    final signedIn = request.headers['Authorization'] == 'Bearer test-token';
+    final paid =
+        signedIn && tables['profiles']!.any((p) => p['plan'] == 'premium');
+    if (paid) return true;
+    final topic = tables['topics']!.firstWhere(
+      (t) => t['id'] == question['topic_id'],
+    );
+    final open = signedIn ? const ['guest', 'free'] : const ['guest'];
+    if (!open.contains(topic['access'])) return false;
+    final firstTen =
+        (tables['questions']!
+                .where((q) => q['topic_id'] == topic['id'])
+                .map((q) => '${q['id']}')
+                .toList()
+              ..sort())
+            .take(10);
+    return firstTen.contains(question['id']);
+  }
 
   Map<String, dynamic> question(
     String id,
@@ -106,6 +134,9 @@ class FakeServer {
 
     if (request.method == 'GET') {
       var out = rows.where((r) {
+        if (byAccess && table == 'questions' && !_mayRead(r, request)) {
+          return false;
+        }
         if (q['user_id'] != null && 'eq.${r['user_id']}' != q['user_id']) {
           return false;
         }
@@ -270,25 +301,99 @@ void main() {
       expect((await localQuestionIds('seed')).length, before);
     });
 
-    test('premium units arrive only with a premium plan', () async {
-      await start(signedIn: true);
-      server.unit('free');
-      server.unit('gold', premium: true);
-      server.topic('tf', 'free');
-      server.topic('tg', 'gold');
-      server.question('f1', 'tf');
+    /// A bank with one topic of each kind; the paid one has 12 questions.
+    void bankByAccess() {
+      server.byAccess = true;
+      server.unit('u');
+      server.topic('tg', 'u', access: 'guest');
+      server.topic('tf', 'u', access: 'free');
+      server.topic('tp', 'u', access: 'paid');
+      server.topic('told', 'u'); // no access sent: counts as paid
       server.question('g1', 'tg');
+      server.question('f1', 'tf');
+      for (var i = 10; i < 22; i++) {
+        server.question('p$i', 'tp');
+      }
       server.tables['profiles']!.add({
         'id': 'test-user',
         'plan': 'free',
         'plan_expires_at': null,
       });
-      await SyncService.run();
-      expect(await localQuestionIds('server'), ['f1']);
+    }
 
+    Future<Map<String, String>> localAccess() async => {
+      for (final t in await QuestionRepository.getTopics()) t.id: t.access,
+    };
+
+    test('each topic keeps who may open it; a topic that arrives without '
+        'questions stays as a locked title', () async {
+      await start(signedIn: true);
+      bankByAccess();
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      expect(await localAccess(), {
+        'tg': 'guest',
+        'tf': 'free',
+        'tp': 'paid',
+        'told': 'paid',
+      });
+      expect((await localQuestionIds('server')).toSet(), {'g1', 'f1'});
+
+      // Still there after a later run and after comparing everything.
+      await SyncService.run();
+      await SyncService.run(fullBank: true);
+      expect((await localAccess()).keys, containsAll(['tp', 'told']));
+
+      // The admin opens a topic to everyone: it follows.
+      server.tables['topics']!.firstWhere((t) => t['id'] == 'tp')['access'] =
+          'guest';
+      await SyncService.run();
+      expect((await localAccess())['tp'], 'guest');
+    });
+
+    test('a change of plan compares the whole bank: paid questions arrive, '
+        'and leave again when the plan ends', () async {
+      await start(signedIn: true);
+      bankByAccess();
+      await SyncService.run();
+      expect((await localQuestionIds('server')).toSet(), {'g1', 'f1'});
+
+      // Paid. The questions are old, so only a full comparison brings them.
       server.tables['profiles']!.first['plan'] = 'premium';
-      await SyncService.run(); // the plan change makes it compare everything
-      expect((await localQuestionIds('server')).toSet(), {'f1', 'g1'});
+      await SyncService.run();
+      expect(await localQuestionIds('server'), hasLength(14));
+
+      // The same level again: only changes are asked for.
+      server.requests.clear();
+      await SyncService.run();
+      expect(
+        server.requests.where(
+          (r) =>
+              r.url.path.endsWith('/questions') &&
+              r.url.queryParameters['updated_at'] == null,
+        ),
+        isEmpty,
+      );
+
+      // The plan ran out: what the server no longer hands out goes, the
+      // topic stays.
+      server.tables['profiles']!.first['plan'] = 'free';
+      await SyncService.run();
+      expect((await localQuestionIds('server')).toSet(), {'g1', 'f1'});
+      expect((await localAccess())['tp'], 'paid');
+    });
+
+    test('a guest gets the starter topics only, and more after signing '
+        'in', () async {
+      await start();
+      bankByAccess();
+      await SyncService.run();
+      expect(await localQuestionIds('server'), ['g1']);
+      expect((await localAccess()).keys.toSet(), {'tg', 'tf', 'tp', 'told'});
+
+      Account.instance.signInForTest();
+      await SyncService.run();
+      expect((await localQuestionIds('server')).toSet(), {'g1', 'f1'});
     });
   });
 

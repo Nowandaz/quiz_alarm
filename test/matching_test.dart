@@ -156,6 +156,21 @@ void main() {
       expect(answersMatch('naltrexone', 'Naloxone'), isFalse);
       expect(answersMatch('flumazenil', 'Naloxone'), isFalse);
     });
+
+    test('the examples from the marking rules', () {
+      expect(answersMatch('paracetemol', 'Paracetamol'), isTrue);
+      expect(answersMatch('adrenalin', 'Adrenaline'), isTrue);
+      expect(answersMatch('warfrin', 'Warfarin'), isTrue);
+      expect(answersMatch('asprin', 'Aspirin'), isTrue);
+      expect(answersMatch('mitochondrion', 'Mitochondria'), isTrue);
+      expect(answersMatch('n acetyl cysteine', 'N-acetylcysteine'), isTrue);
+      expect(answersMatch('cox1', 'COX-1'), isTrue);
+      expect(answersMatch('COX-2', 'COX-1'), isFalse);
+      expect(answersMatch('IL-2', 'IL-1'), isFalse);
+      expect(answersMatch('ACh', 'ACE'), isFalse);
+      expect(answersMatch('hyperkalaemia', 'Hypokalaemia'), isFalse);
+      expect(normalizeAnswer('  N-Acetyl  CYSTEINE! '), 'n acetyl cysteine');
+    });
   });
 
   group('isLocallyCorrect', () {
@@ -189,14 +204,27 @@ void main() {
       expect(isLocallyCorrect(mcq, 'Kidney'), isFalse);
     });
 
-    test('certainVerdict leaves inexact typed answers to the AI', () {
+    test('certainVerdict: the phone marks first, the rest is left open', () {
       expect(QuestionService.certainVerdict(mcq, 'Kidney'), isFalse);
       expect(QuestionService.certainVerdict(saq, 'Adrenaline'), isTrue);
+      // A small typo is now marked right on the phone (it used to be
+      // left to the AI).
       expect(
         QuestionService.certainVerdict(saq, 'adrenalin injection'),
-        isNull,
+        isTrue,
       );
+      // Only an answer the phone cannot match is left for the AI.
+      expect(QuestionService.certainVerdict(saq, 'atropine'), isNull);
       expect(QuestionService.certainVerdict(saq, ''), isFalse);
+    });
+
+    test('gradeLocally says which spelling was meant', () {
+      final typo = gradeLocally(saq, 'epinefrine');
+      expect(typo.correct, isTrue);
+      expect(typo.hint, 'Spelling: Epinephrine');
+      expect(gradeLocally(saq, 'Adrenaline').hint, isNull);
+      expect(gradeLocally(mcq, 'liver').exact, isTrue);
+      expect(gradeLocally(mcq, 'livr').correct, isFalse);
     });
   });
 

@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'account.dart';
+import 'entitlements.dart';
 import 'server_config.dart';
 
 class AiException implements Exception {
@@ -43,6 +44,15 @@ class AiClient {
   static bool get available => Account.instance.isSignedIn;
 
   static const String signInHint = 'Sign in (Settings) to use AI features.';
+
+  /// Said when a plan without the AI reaches an AI call anyway.
+  static const String proHint = 'AI is part of Pro.';
+
+  /// The last line of defence: the screens already lock the AI for plans
+  /// without it, so this only fires if one of them forgot to.
+  static void _needsPaidPlan() {
+    if (!Entitlements.instance.canUseAi) throw const AiException(proHint);
+  }
 
   /// Whether [message] is the server saying today's AI allowance is used
   /// up (as opposed to "slow down" or a network problem). Screens offer
@@ -116,6 +126,7 @@ class AiClient {
     List<String> avoid = const [],
     String objectives = '',
   }) async {
+    _needsPaidPlan();
     final data = await _call(
       'POST',
       '/v1/ai/generate',
@@ -146,7 +157,8 @@ class AiClient {
     required String explanation,
     required String userAnswer,
     bool? knownVerdict,
-  }) {
+  }) async {
+    _needsPaidPlan();
     String cut(String s, int max) => s.length > max ? s.substring(0, max) : s;
     return _call(
       'POST',
@@ -171,6 +183,7 @@ class AiClient {
     required String userAnswer,
     Duration timeout = const Duration(seconds: 6),
   }) async {
+    _needsPaidPlan();
     String cut(String s, int max) => s.length > max ? s.substring(0, max) : s;
     final data = await _call(
       'POST',

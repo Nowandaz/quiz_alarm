@@ -1,18 +1,26 @@
 /// The sign-in screen: create an account or sign in, with email and
-/// password or with Google. An account is required, so this screen cannot
-/// be dismissed; it closes by itself once the user is signed in.
+/// password or with Google. It closes by itself once the user is signed
+/// in.
+///
+/// As the welcome screen (the first thing a new user sees) it cannot be
+/// dismissed, but offers "Continue without an account". Opened later
+/// (from Settings, or from a "create an account" prompt) it has a back
+/// button instead.
 library;
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../services/account.dart';
+import '../services/guest_mode.dart';
 import '../services/system_bridge.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/brand.dart';
 
 class AccountScreen extends StatefulWidget {
-  const AccountScreen({super.key});
+  /// True for the welcome screen shown when the app opens.
+  final bool welcome;
+  const AccountScreen({super.key, this.welcome = false});
   @override
   State<AccountScreen> createState() => _AccountScreenState();
 }
@@ -63,6 +71,13 @@ class _AccountScreenState extends State<AccountScreen> {
     } else {
       Navigator.removeRoute(context, route);
     }
+  }
+
+  /// "Continue without an account": remembered, so the app opens
+  /// normally from now on.
+  Future<void> _continueAsGuest() async {
+    await GuestMode.choose();
+    if (mounted) Navigator.pop(context);
   }
 
   void _onGoogleResult() {
@@ -206,12 +221,24 @@ class _AccountScreenState extends State<AccountScreen> {
     final muted = scheme.onSurface.withValues(alpha: 0.62);
 
     return PopScope(
-      canPop: false, // an account is required
+      // The welcome screen is left by signing in or by choosing to go on
+      // without an account, not with the back button.
+      canPop: !widget.welcome,
       child: Scaffold(
         body: AppBackground(
           child: Stack(
             children: [
               const Positioned.fill(child: BrandDial()),
+              if (!widget.welcome)
+                const SafeArea(
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Padding(
+                      padding: EdgeInsets.all(4),
+                      child: BackButton(),
+                    ),
+                  ),
+                ),
               SafeArea(
                 child: Center(
                   child: SingleChildScrollView(
@@ -456,6 +483,21 @@ class _AccountScreenState extends State<AccountScreen> {
                                     ),
                                   ],
                                 ),
+                              ),
+                            ),
+                          ],
+                          if (widget.welcome && !_recovering) ...[
+                            const SizedBox(height: 14),
+                            TextButton(
+                              onPressed: _busy ? null : _continueAsGuest,
+                              child: const Text('Continue without an account'),
+                            ),
+                            Text(
+                              '3 alarms and two starter topics. You can '
+                              'create an account any time.',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: muted,
                               ),
                             ),
                           ],

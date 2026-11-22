@@ -14,9 +14,11 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/ai_client.dart';
 import '../services/billing.dart';
+import '../services/entitlements.dart';
 import '../services/question_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import '../widgets/question_image.dart';
 import 'practice_results.dart';
 import 'upgrade_screen.dart';
@@ -77,7 +79,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
   String _userAnswer = '';
   bool _verdict = false;
 
-  bool get _hasKey => AiClient.available;
+  /// The AI is used only when signed in and on a plan that includes it.
+  bool get _hasKey => QuestionService.canUseAi;
+
+  /// One line under the verdict: the right spelling when a typo was
+  /// forgiven, or the part of the answer that was missing.
+  String? _hint;
   bool _aiLoading = false;
   String? _aiText;
   String? _aiError;
@@ -183,6 +190,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
     setState(() {
       _question = q;
       _userAnswer = '';
+      _hint = null;
       _aiText = null;
       _aiError = null;
       _aiLoading = false;
@@ -202,30 +210,34 @@ class _PracticeScreenState extends State<PracticeScreen> {
     _timer.stop();
     final taken = _timer.elapsed;
     final useAi = widget.aiTutor && _hasKey;
-    final certain = QuestionService.certainVerdict(q, answer);
 
     setState(() {
       _userAnswer = answer.trim();
       _phase = _Phase.checking;
     });
 
-    bool verdict;
-    if (useAi && certain == null) {
-      // A typed answer that is not word-for-word: the AI decides.
+    // The phone marks first (free, instant, offline).
+    final local = await QuestionService.gradeLocal(q, answer);
+    var verdict = local.correct;
+    String? hint = local.hint;
+    if (useAi &&
+        !verdict &&
+        q.type == QuestionType.saq &&
+        answer.trim().isNotEmpty) {
+      // A typed answer the phone could not match: the AI decides.
       try {
         final fb = await QuestionService.aiFeedback(q, answer);
         verdict = fb.correct;
         _aiText = fb.feedback;
+        if (verdict) hint = null;
       } catch (e) {
-        verdict = isLocallyCorrect(q, answer);
         _aiError = e.toString();
       }
-    } else {
-      verdict = certain ?? isLocallyCorrect(q, answer);
     }
     if (!mounted || _question?.id != q.id) return;
 
     setState(() {
+      _hint = hint;
       _verdict = verdict;
       _phase = _Phase.answered;
       _answered++;
@@ -252,6 +264,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   Future<void> _askTutor() async {
     final q = _question;
     if (q == null || _aiLoading) return;
+    if (!Entitlements.instance.canUseAi) return showAiLocked(context);
     setState(() {
       _aiLoading = true;
       _aiError = null;
@@ -617,6 +630,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
           ),
+        if (_hint != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(_hint!, style: Theme.of(context).textTheme.bodySmall),
+          ),
         const SizedBox(height: 12),
         if (hasExplanation)
           _infoCard(
@@ -679,21 +697,45 @@ class _PracticeScreenState extends State<PracticeScreen> {
               ],
             ),
           )
-        else if (_hasKey)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: _askTutor,
-              icon: const Icon(Icons.auto_awesome, size: 18),
-              label: Text(
-                _verdict ? 'Ask the AI tutor for more' : 'Ask the AI tutor why',
-              ),
-            ),
-          )
-        else if (!hasExplanation)
-          Text(
-            'No explanation is saved for this question. $signInForAi',
-            style: Theme.of(context).textTheme.bodySmall,
+        else
+          // The plan can change while this screen is open.
+          ListenableBuilder(
+            listenable: Entitlements.instance,
+            builder: (context, _) {
+              final locked = !Entitlements.instance.canUseAi;
+              final label = _verdict
+                  ? 'Ask the AI tutor for more'
+                  : 'Ask the AI tutor why';
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!hasExplanation)
+                    Text(
+                      'No explanation is saved for this question.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  if (locked)
+                    // Never reaches the AI server: it only says how to
+                    // unlock it.
+                    TextButton.icon(
+                      onPressed: () => showAiLocked(context),
+                      icon: const Icon(Icons.lock_rounded, size: 18),
+                      label: Text(label),
+                    )
+                  else if (_hasKey)
+                    TextButton.icon(
+                      onPressed: _askTutor,
+                      icon: const Icon(Icons.auto_awesome, size: 18),
+                      label: Text(label),
+                    )
+                  else
+                    Text(
+                      signInForAi,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                ],
+              );
+            },
           ),
       ],
     );
@@ -735,3 +777,13 @@ class _PracticeScreenState extends State<PracticeScreen> {
     );
   }
 }
+
+/// The sheet shown when the AI tutor is tapped on a plan without it.
+Future<void> showAiLocked(BuildContext context) => showLockedSheet(
+  context,
+  title: 'AI tutor',
+  message: 'The AI tutor is part of Pro.',
+  guestMessage:
+      'The AI tutor is part of Pro. Create a free account first, then '
+      'see the plans.',
+);

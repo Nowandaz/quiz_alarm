@@ -12,6 +12,7 @@ import '../data/alarm_log.dart';
 import '../data/question_repository.dart';
 import '../models/models.dart';
 import 'alarm_backend.dart';
+import 'entitlements.dart';
 import 'question_service.dart';
 import 'sync_service.dart';
 import 'system_bridge.dart';
@@ -147,6 +148,36 @@ class AlarmProvider extends ChangeNotifier {
     _loadAlarms().then((_) => unawaited(refillQuestionBank()));
     _ringSubscription = this.backend.rings.listen(_onRing);
     SyncService.onAlarmsRestored = _loadAlarms;
+    Entitlements.instance.addListener(_planChanged);
+  }
+
+  // ------------------------------------------------- what the plan allows
+
+  /// False when the plan's alarm limit is reached (guests: three). Alarms
+  /// already above the limit keep ringing and can be edited or deleted.
+  bool get canAddAlarm => Entitlements.instance.canAddAlarm(alarms.length);
+
+  /// The quietest volume an alarm can be set to.
+  static const double minVolume = 0.2;
+
+  /// The volume [alarm] rings at: its own on a paid plan, otherwise full.
+  /// So when a plan runs out, alarms go back to maximum by themselves.
+  static double effectiveVolume(AlarmItem alarm) =>
+      Entitlements.instance.canSetVolume
+      ? alarm.volume.clamp(minVolume, 1.0).toDouble()
+      : 1.0;
+
+  bool _volumeUnlocked = Entitlements.instance.canSetVolume;
+
+  /// The plan changed: alarms with a volume of their own are registered
+  /// again, so they ring at the volume the plan now allows.
+  void _planChanged() {
+    final unlocked = Entitlements.instance.canSetVolume;
+    if (unlocked == _volumeUnlocked) return;
+    _volumeUnlocked = unlocked;
+    for (final a in alarms.where((a) => a.isEnabled && a.volume < 1.0)) {
+      unawaited(_oneAtATime(() => _arm(a)));
+    }
   }
 
   /// Asks the AI for fresh questions on the alarms' topics when they are
@@ -290,8 +321,9 @@ class AlarmProvider extends ChangeNotifier {
       dateTime: when,
       audioPath: alarm.audioPath,
       vibrate: alarm.vibrate,
-      // Always the loudest the phone can go, whatever its volume is set to.
-      volume: 1.0,
+      // The loudest the phone can go, whatever its volume is set to,
+      // unless a paid plan chose a quieter one for this alarm.
+      volume: effectiveVolume(alarm),
       fadeDuration: alarm.fadeDuration,
       title: title ?? name,
       body:
@@ -709,7 +741,10 @@ class AlarmProvider extends ChangeNotifier {
     });
   }
 
-  Future<void> addAlarm(AlarmItem alarm) => _oneAtATime(() async {
+  /// Adds [alarm]. False (and nothing happens) when the plan's alarm
+  /// limit is reached, see [canAddAlarm].
+  Future<bool> addAlarm(AlarmItem alarm) => _oneAtATime(() async {
+    if (!canAddAlarm) return false;
     alarm.activeDays = alarm.activeDays.toSet().toList()..sort();
     alarms.add(alarm);
     _sort();
@@ -720,6 +755,7 @@ class AlarmProvider extends ChangeNotifier {
     );
     await saveAlarms();
     unawaited(refillQuestionBank());
+    return true;
   });
 
   Future<void> updateAlarm(AlarmItem alarm) => _oneAtATime(() async {
@@ -1079,6 +1115,7 @@ class AlarmProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    Entitlements.instance.removeListener(_planChanged);
     _ringSubscription?.cancel();
     super.dispose();
   }

@@ -1,11 +1,12 @@
 /// Keeps the list of units, topics and progress in memory for the screens,
-/// and reloads it whenever the question bank changes.
+/// and reloads it whenever the question bank or the plan changes.
 library;
 
 import 'package:material_ui/material_ui.dart';
 
 import '../data/question_repository.dart';
 import '../models/models.dart';
+import 'entitlements.dart';
 import 'question_service.dart';
 
 class BankProvider extends ChangeNotifier {
@@ -22,6 +23,8 @@ class BankProvider extends ChangeNotifier {
 
   BankProvider() {
     QuestionService.changes.addListener(reload);
+    // The plan decides which topics are open and how many questions count.
+    Entitlements.instance.addListener(reload);
     reload();
   }
 
@@ -39,8 +42,17 @@ class BankProvider extends ChangeNotifier {
       error = 'The question bank could not be opened: $e';
     }
     isLoading = false;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
+
+  bool _disposed = false;
+
+  /// Whether the plan opens [topic] (see QuestionRepository.isOpen).
+  bool isOpen(Topic topic) => QuestionRepository.isOpen(topic);
+
+  /// Topics that can be chosen right now: open, and not archived. This
+  /// is what "all topics" stands for.
+  List<Topic> get openTopics => activeTopics.where(isOpen).toList();
 
   List<Topic> topicsOf(String unitId) =>
       topics.where((t) => t.unitId == unitId).toList();
@@ -90,6 +102,8 @@ class BankProvider extends ChangeNotifier {
   @override
   void dispose() {
     QuestionService.changes.removeListener(reload);
+    Entitlements.instance.removeListener(reload);
+    _disposed = true;
     super.dispose();
   }
 }

@@ -11,6 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/alarm_provider.dart';
 import '../services/billing.dart';
+import '../services/entitlements.dart';
+import '../services/guest_mode.dart';
+import '../widgets/lock_prompt.dart';
 import '../services/system_bridge.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
@@ -27,8 +30,9 @@ import 'tabs/reports_tab.dart';
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
-  /// An account is required to use the app. The browser emulator can
-  /// switch this off (open it with ?guest) to try screens without one.
+  /// The app opens on the welcome (sign-in) screen until the person signs
+  /// in or chooses to go on without an account. The browser emulator can
+  /// switch this off (open it with ?guest) to skip that screen.
   static bool requireAccount = true;
 
   @override
@@ -56,8 +60,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
 
-    // Signing out brings the sign-in screen back.
-    Account.instance.addListener(_requireAccount);
+    // Signing out brings the welcome screen back.
+    Account.instance.addListener(_onAccount);
 
     // A payment started before the app was closed may have gone through.
     WidgetsBinding.instance.addObserver(this);
@@ -82,6 +86,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       provider.addListener(_askAboutMissed);
       _askAboutMissed();
+      // The app may have been opened by a ringing alarm: only then may it
+      // show over the lock screen. Known once the alarms have been read.
+      provider.loaded.then((_) {
+        if (mounted) SystemBridge.setAlarmScreen(provider.isAlarmRinging);
+      });
+      // Already signed in: an old "without an account" choice is over.
+      if (Account.instance.isSignedIn) GuestMode.clear();
       _welcome(simulated: provider.backend.isSimulated);
 
       provider.onAlarmTriggered = (alarm) async {
@@ -141,7 +152,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _checkPayment();
+    if (state != AppLifecycleState.resumed) return;
+    _checkPayment();
+    // The plan may have changed, or run out, while the app was away.
+    Entitlements.instance.refresh();
+    if (!Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
+      SystemBridge.setAlarmScreen(false);
+    }
+  }
+
+  /// Signed in: the "without an account" choice is over. Signed out: the
+  /// welcome screen comes back (and offers that choice again).
+  Future<void> _onAccount() async {
+    if (Account.instance.isSignedIn) {
+      await GuestMode.clear();
+    } else {
+      await _requireAccount();
+    }
   }
 
   /// Asks about a payment that was started and not yet seen to finish.
@@ -165,13 +192,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    Account.instance.removeListener(_requireAccount);
+    Account.instance.removeListener(_onAccount);
     super.dispose();
   }
 
-  /// Shows the sign-in screen until the user is signed in. It sits on top
-  /// of this screen rather than replacing it, so a ringing alarm can still
-  /// open its quiz over it.
+  /// Shows the welcome screen until the user signs in or chooses to go on
+  /// without an account. It sits on top of this screen rather than
+  /// replacing it, so a ringing alarm can still open its quiz over it.
   Future<void> _requireAccount() async {
     if (!HomeScreen.requireAccount ||
         Account.instance.isSignedIn ||
@@ -179,6 +206,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         !mounted) {
       return;
     }
+    _gateOpen = true; // held while the saved choice is read
+    final guest = await GuestMode.chosen();
+    _gateOpen = false;
+    if (guest || Account.instance.isSignedIn || !mounted) return;
     // Never put the sign-in screen over a ringing alarm's quiz: it would
     // be unreachable while the alarm sounds. It comes up afterwards.
     if (Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
@@ -189,7 +220,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       context,
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (_) => const AccountScreen(),
+        builder: (_) => const AccountScreen(welcome: true),
       ),
     );
     _gateOpen = false;
@@ -198,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// First launch: offer the tour, then ask for the permissions alarms
   /// need. Later launches only ask for permissions not yet dealt with.
   Future<void> _welcome({required bool simulated}) async {
-    // An account is required: the sign-in screen comes first, then the tour.
+    // The welcome screen comes first, then the tour.
     await _requireAccount();
     if (!mounted) return;
     if (await AppTour.shouldShow() && mounted) {
@@ -463,6 +494,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       ),
                   ],
                 ),
+              ),
+              ListenableBuilder(
+                listenable: Entitlements.instance,
+                builder: (context, _) => Entitlements.instance.needsCheck
+                    ? const PlanCheckBanner()
+                    : const SizedBox.shrink(),
               ),
               Expanded(
                 child: NotificationListener<UserScrollNotification>(

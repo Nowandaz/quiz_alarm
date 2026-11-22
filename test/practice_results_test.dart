@@ -4,6 +4,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:quiz_alarm/models/models.dart';
 import 'package:quiz_alarm/screens/practice_results.dart';
 
+import 'helpers.dart';
+
 Question q(String id, String text, String answer) => Question(
   id: id,
   topic: 'Antibiotics',
@@ -14,6 +16,9 @@ Question q(String id, String text, String answer) => Question(
 );
 
 void main() {
+  // Each result carries a flag button, which reads the database.
+  setUp(() => resetApp());
+
   Future<void> show(WidgetTester tester, List<PracticeResult> results) async {
     tester.view.physicalSize = const Size(1200, 3000);
     tester.view.devicePixelRatio = 3;

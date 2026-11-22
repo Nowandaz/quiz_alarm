@@ -13,6 +13,7 @@ import 'data/alarm_log.dart';
 import 'data/question_repository.dart';
 import 'services/bank_provider.dart';
 import 'services/billing.dart';
+import 'services/entitlements.dart';
 import 'services/sync_service.dart';
 import 'services/theme_provider.dart';
 import 'theme/app_theme.dart';
@@ -27,6 +28,11 @@ Future<void> main() async {
   }
 
   await Account.instance.load();
+  // What the plan opens. Read from the phone first (works offline), then
+  // confirmed with the server in the background.
+  final plan = Entitlements.instance;
+  await plan.load();
+  plan.refresh();
 
   // Syncing with the server: at start, shortly after anything of the
   // user's changes, and when they sign in or out.
@@ -39,12 +45,21 @@ Future<void> main() async {
   SyncService.loadStatus();
   // A confirmed payment: fetch the whole bank so premium units arrive.
   Billing.onPaid = () => SyncService.run(fullBank: true);
+  // The plan changed (bought, ran out, signed in or out): the server now
+  // lets this phone see other questions, so the bank is fetched again.
+  var level = plan.level;
+  plan.addListener(() {
+    if (plan.level == level) return;
+    level = plan.level;
+    SyncService.schedule(const Duration(seconds: 1));
+  });
   SyncService.schedule(const Duration(seconds: 3));
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider<Account>.value(value: Account.instance),
+        ChangeNotifierProvider<Entitlements>.value(value: plan),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => BankProvider()),
         ChangeNotifierProvider(create: (_) => AlarmProvider(backend: backend)),

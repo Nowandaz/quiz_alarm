@@ -9,6 +9,7 @@ import '../models/models.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
+import 'flag_sheet.dart';
 import 'practice_screen.dart';
 
 /// One answered question of a session. An empty [userAnswer] means the
@@ -272,6 +273,8 @@ class _ResultCard extends StatelessWidget {
                 style: theme.textTheme.bodySmall?.copyWith(height: 1.4),
               ),
             ],
+            // Report a wrong or unclear question to the reviewers.
+            Align(alignment: Alignment.centerRight, child: FlagButton(q)),
           ],
         ),
       ),

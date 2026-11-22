@@ -1,13 +1,19 @@
 package com.example.quiz_alarm
 
 import android.app.ActivityManager
+import android.app.KeyguardManager
 import android.app.NotificationManager
+import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -30,6 +36,13 @@ import io.flutter.plugin.common.MethodChannel
  *  - deviceInfo / exitReasons: details attached to problem reports.
  *  - openAutostartSettings: the phone maker's "autostart" page, where some
  *    brands decide whether an app may start by itself after a restart.
+ *  - setAlarmScreen: while an alarm rings the screen is kept awake (also
+ *    in power saving mode) and the quiz may show over the lock screen. At
+ *    every other time the app stays BEHIND the lock screen like any other
+ *    app, so a locked phone does not give access to the account.
+ *  - uninstallProtectionOn / requestUninstallProtection /
+ *    removeUninstallProtection: the optional "cannot be uninstalled while
+ *    an alarm rings" switch (see AdminReceiver).
  */
 class MainActivity : FlutterActivity() {
     companion object {
@@ -42,9 +55,68 @@ class MainActivity : FlutterActivity() {
         // ("alarm id:ring time", set by SkipAlarmActivity.)
         @JvmStatic
         var pendingSkipAlarm: String? = null
+
+        // True while the quiz of a ringing alarm is on screen (set by the
+        // Dart side). AdminReceiver reads it.
+        @JvmStatic
+        @Volatile
+        var ringing: Boolean = false
     }
 
     private var channel: MethodChannel? = null
+    private val handler = Handler(Looper.getMainLooper())
+
+    // Takes the app back behind the lock screen if no alarm turned out to
+    // be ringing (see showIfLocked).
+    private val hideAgain = Runnable { if (!ringing) overLockScreen(false) }
+
+    /** Lets this screen show over the lock screen and wake the display. */
+    private fun overLockScreen(on: Boolean) {
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(on)
+            setTurnScreenOn(on)
+        } else {
+            @Suppress("DEPRECATION")
+            val flags = WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            if (on) window.addFlags(flags) else window.clearFlags(flags)
+        }
+    }
+
+    /**
+     * The app is being opened while the phone is locked. Normally only a
+     * ringing alarm can do that, so show over the lock screen for a
+     * moment; the Dart side then says whether an alarm really is ringing
+     * (setAlarmScreen). If it does not, hide again.
+     */
+    private fun showIfLocked() {
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (!keyguard.isKeyguardLocked) return
+        overLockScreen(true)
+        handler.removeCallbacks(hideAgain)
+        handler.postDelayed(hideAgain, 15000)
+    }
+
+    private fun admin() = ComponentName(this, AdminReceiver::class.java)
+
+    private fun policyManager() =
+        getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        showIfLocked()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        showIfLocked()
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacks(hideAgain)
+        ringing = false
+        super.onDestroy()
+    }
 
     override fun onResume() {
         super.onResume()
@@ -65,6 +137,56 @@ class MainActivity : FlutterActivity() {
         channel = ch
         ch.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "setAlarmScreen" -> {
+                        val on = call.argument<Boolean>("on") ?: false
+                        ringing = on
+                        handler.removeCallbacks(hideAgain)
+                        overLockScreen(on)
+                        // Power saving mode shortens the screen timeout;
+                        // this keeps the display awake while answering.
+                        if (on) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(null)
+                    }
+                    "uninstallProtectionOn" -> {
+                        result.success(
+                            try {
+                                policyManager().isAdminActive(admin())
+                            } catch (e: Exception) {
+                                false
+                            }
+                        )
+                    }
+                    "requestUninstallProtection" -> {
+                        try {
+                            startActivity(
+                                Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                                    .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin())
+                                    .putExtra(
+                                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                        "Stops BrainWake being uninstalled while an alarm is ringing."
+                                    )
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "removeUninstallProtection" -> {
+                        if (ringing) {
+                            result.success(false)
+                        } else {
+                            try {
+                                policyManager().removeActiveAdmin(admin())
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.success(false)
+                            }
+                        }
+                    }
                     "openUrl" -> {
                         try {
                             val url = call.argument<String>("url") ?: ""

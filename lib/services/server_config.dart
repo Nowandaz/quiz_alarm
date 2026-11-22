@@ -15,4 +15,9 @@ class ServerConfig {
   /// The AI server (writes questions, tutor, marking of typed answers).
   static const String apiUrl =
       'https://jarvis-norys.austriaeast.cloudapp.azure.com/brainwake';
+
+  /// The legal pages (hosted with the admin site; public).
+  static const String termsUrl = 'https://amkausome.onrender.com/terms.html';
+  static const String privacyUrl =
+      'https://amkausome.onrender.com/privacy.html';
 }

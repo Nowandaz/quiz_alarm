@@ -1,6 +1,7 @@
 /// One past alarm or practice session: its totals, then every question
 /// with what you answered, the correct answer, the explanation and how
-/// long you took. Everything comes from the local database.
+/// long you took. Everything comes from the local database. Each
+/// question has a flag to report it for review.
 library;
 
 import 'package:intl/intl.dart';
@@ -12,6 +13,7 @@ import '../models/models.dart';
 import '../services/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/question_image.dart';
+import 'flag_sheet.dart';
 import 'tabs/reports_tab.dart' show formatDuration;
 
 class SessionScreen extends StatefulWidget {
@@ -189,6 +191,7 @@ class _SessionScreenState extends State<SessionScreen> {
                 style: TextStyle(color: scheme.onSurfaceVariant, height: 1.4),
               ),
             ],
+            Align(alignment: Alignment.centerRight, child: FlagButton(q)),
           ],
         ),
       ),

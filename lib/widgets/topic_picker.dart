@@ -1,12 +1,14 @@
 /// Multi-select of topics: units are listed first and open to show their
 /// topics; with a search box and "all" tick boxes. Used when choosing what an
 /// alarm asks about and what a revision session covers. Archived units are
-/// left out, unless one of their topics was already ticked.
+/// left out, unless one of their topics was already ticked. Topics the
+/// plan does not open are listed with a lock and cannot be ticked.
 library;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../models/models.dart';
 import '../services/bank_provider.dart';
 import 'app_widgets.dart';
 
@@ -90,32 +92,53 @@ class _TopicPickerState extends State<TopicPicker> {
     ];
     final everything = {
       for (final u in units)
-        for (final t in bank.topicsOf(u.id)) t.id,
+        for (final t in bank.topicsOf(u.id))
+          if (bank.isOpen(t)) t.id,
     };
 
-    Widget topicRow(String id, String name, int count) => InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => _toggle(id),
-      child: Padding(
-        padding: const EdgeInsets.only(left: 30),
-        child: Row(
-          children: [
-            Checkbox(
-              value: widget.selected.contains(id),
-              onChanged: (_) => _toggle(id),
-            ),
-            Expanded(child: Text(name)),
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: Text(
-                plural(count, 'question'),
-                style: theme.textTheme.bodySmall,
+    Widget topicRow(Topic topic) {
+      final locked = !bank.isOpen(topic);
+      final count = bank.statsOf(topic.id).total;
+      return InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: locked ? null : () => _toggle(topic.id),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 30),
+          child: Row(
+            children: [
+              Checkbox(
+                value: !locked && widget.selected.contains(topic.id),
+                onChanged: locked ? null : (_) => _toggle(topic.id),
               ),
-            ),
-          ],
+              Expanded(
+                child: Text(
+                  topic.name,
+                  style: locked
+                      ? TextStyle(
+                          color: scheme.onSurface.withValues(alpha: 0.45),
+                        )
+                      : null,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: locked
+                    ? Icon(
+                        Icons.lock_rounded,
+                        size: 16,
+                        color: scheme.onSurface.withValues(alpha: 0.45),
+                        semanticLabel: 'Locked',
+                      )
+                    : Text(
+                        plural(count, 'question'),
+                        style: theme.textTheme.bodySmall,
+                      ),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    }
 
     var anyMatch = false;
     final unitBlocks = <Widget>[];
@@ -130,11 +153,12 @@ class _TopicPickerState extends State<TopicPicker> {
       if (searching && shown.isEmpty) continue;
       anyMatch = true;
 
-      final ids = topics.map((t) => t.id).toSet();
+      final ids = topics.where(bank.isOpen).map((t) => t.id).toSet();
       final picked = ids.where(widget.selected.contains).length;
       // The tick box acts on what is on screen: while searching that is
-      // only the topics shown, never ones the search has hidden.
-      final shownIds = shown.map((t) => t.id).toSet();
+      // only the topics shown, never ones the search has hidden. Locked
+      // topics are never ticked.
+      final shownIds = shown.where(bank.isOpen).map((t) => t.id).toSet();
       final open = searching || _open.contains(unit.id);
 
       unitBlocks.add(
@@ -205,8 +229,7 @@ class _TopicPickerState extends State<TopicPicker> {
                     ? const SizedBox(width: double.infinity)
                     : Column(
                         children: [
-                          for (final t in shown)
-                            topicRow(t.id, t.name, bank.statsOf(t.id).total),
+                          for (final t in shown) topicRow(t),
                           const SizedBox(height: 6),
                         ],
                       ),
@@ -280,7 +303,7 @@ Future<Set<String>?> showTopicPickerSheet(
   String title = 'Topics',
 }) {
   var current = {...initial};
-  final allCount = context.read<BankProvider>().activeTopics.length;
+  final allCount = context.read<BankProvider>().openTopics.length;
   return showModalBottomSheet<Set<String>>(
     context: context,
     isScrollControlled: true,

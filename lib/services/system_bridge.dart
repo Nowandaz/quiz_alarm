@@ -64,6 +64,33 @@ class SystemBridge {
     return _autostartMakers.any(maker.contains);
   }
 
+  /// Call with true while an alarm is ringing and false once it is over.
+  /// While true the screen stays awake (also in power saving mode) and the
+  /// quiz may show over the lock screen. While false the app sits behind
+  /// the lock screen like any other app.
+  static Future<void> setAlarmScreen(bool ringing) async {
+    if (!_android) return;
+    try {
+      await _channel.invokeMethod<void>('setAlarmScreen', {'on': ringing});
+    } catch (e) {
+      debugPrint('setAlarmScreen failed: $e');
+    }
+  }
+
+  /// Whether "cannot be uninstalled" protection is switched on (the app
+  /// is a device admin app).
+  static Future<bool> uninstallProtectionOn() =>
+      _call('uninstallProtectionOn', fallback: false);
+
+  /// Opens Android's page that asks the user to switch the protection on.
+  /// Check [uninstallProtectionOn] when the app comes back.
+  static Future<bool> requestUninstallProtection() =>
+      _call('requestUninstallProtection', fallback: false);
+
+  /// Switches the protection off. Refused (false) while an alarm rings.
+  static Future<bool> removeUninstallProtection() =>
+      _call('removeUninstallProtection', fallback: false);
+
   /// Brings the app to the screen (used when an alarm rings while the app
   /// is in the background).
   static Future<bool> bringToFront() => _call('bringToFront', fallback: false);

@@ -16,6 +16,8 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/alarm_provider.dart';
 import '../services/question_service.dart';
+import '../services/sound_prefs.dart';
+import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_widgets.dart';
@@ -32,6 +34,10 @@ class AlarmRingScreen extends StatefulWidget {
 
   const AlarmRingScreen({super.key, required this.alarm, this.preview = false});
 
+  /// Told the name of each right/wrong sound as it is played (tests only).
+  @visibleForTesting
+  static void Function(String name)? debugOnSfx;
+
   @override
   State<AlarmRingScreen> createState() => _AlarmRingScreenState();
 }
@@ -47,6 +53,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   _Phase _phase = _Phase.loading;
   Question? _currentQuestion;
   String _lastAnswer = '';
+
+  /// One line under the verdict: the right spelling when a typo was
+  /// forgiven, or the part of the answer that was missing.
+  String? _hint;
   final Set<String> _shown = {};
   final Stopwatch _questionTimer = Stopwatch();
   Future<int?>? _session;
@@ -63,6 +73,10 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
   @override
   void initState() {
     super.initState();
+    // Keeps the screen awake while answering (also in power saving mode)
+    // and lets the quiz show over the lock screen, only while ringing.
+    if (!widget.preview) SystemBridge.setAlarmScreen(true);
+    SoundPrefs.load().catchError((_) => false);
     _sfxPlayer
         .setAudioContext(
           AudioContext(
@@ -93,6 +107,7 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
 
   @override
   void dispose() {
+    if (!widget.preview) SystemBridge.setAlarmScreen(false);
     HardwareKeyboard.instance.removeHandler(_blockVolumeKeys);
     _saqController.dispose();
     _sfxPlayer.dispose();
@@ -100,7 +115,11 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
     super.dispose();
   }
 
+  /// The short right/wrong sound, unless muted in Settings. (The alarm
+  /// itself is played elsewhere and is never muted by that switch.)
   void _sfx(String name) {
+    if (SoundPrefs.muteAnswerSounds) return;
+    AlarmRingScreen.debugOnSfx?.call(name);
     _sfxPlayer.play(AssetSource('sounds/$name.mp3')).catchError((_) {});
   }
 
@@ -214,7 +233,9 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       _lastAnswer = answer.trim();
     });
 
-    final isCorrect = await QuestionService.gradeAnswer(q, answer);
+    final grade = await QuestionService.grade(q, answer);
+    final isCorrect = grade.correct;
+    _hint = grade.hint;
     final session = await _session;
     unawaited(
       QuestionRepository.recordAttempt(
@@ -469,6 +490,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
         '${_needed - _correctStreak} more to go',
         style: const TextStyle(color: Colors.white70, fontSize: 16),
       ),
+      if (_hint != null) ...[
+        const SizedBox(height: 10),
+        Text(
+          _hint!,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white54, fontSize: 14),
+        ),
+      ],
     ],
   );
 
@@ -659,6 +688,14 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
             color: AppColors.success,
             icon: Icons.check,
           ),
+          if (_hint != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                _hint!,
+                style: const TextStyle(color: Colors.white70, fontSize: 14),
+              ),
+            ),
           if (q.explanation.trim().isNotEmpty) ...[
             const Text(
               'WHY',

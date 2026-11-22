@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../models/models.dart';
 import '../services/bank_provider.dart';
 import '../widgets/app_widgets.dart';
+import '../widgets/lock_prompt.dart';
 import 'practice_setup.dart';
 import 'tabs/question_bank_tab.dart' show showAddTopicDialog;
 import 'topic_screen.dart';
@@ -155,7 +156,10 @@ class UnitScreen extends StatelessWidget {
                           ? null
                           : () => showPracticeSetup(
                               context,
-                              initialTopics: topics.map((t) => t.id).toSet(),
+                              initialTopics: {
+                                for (final t in topics)
+                                  if (bank.isOpen(t)) t.id,
+                              },
                               title: unit.name,
                             ),
                       style: FilledButton.styleFrom(
@@ -230,22 +234,34 @@ class TopicCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // A topic the plan does not open: its title with a lock, nothing more.
+    final locked = !context.watch<BankProvider>().isOpen(topic);
+    final faded = theme.colorScheme.onSurface.withValues(alpha: 0.45);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Card(
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
-          ),
+          onTap: () => locked
+              ? showTopicLockedSheet(context, topic)
+              : Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
+                ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
             child: Row(
               children: [
-                ProgressRing(
-                  value: stats.total == 0 ? 0 : stats.mastered / stats.total,
-                ),
+                if (locked)
+                  SizedBox(
+                    width: 52,
+                    height: 52,
+                    child: Icon(Icons.lock_rounded, color: faded),
+                  )
+                else
+                  ProgressRing(
+                    value: stats.total == 0 ? 0 : stats.mastered / stats.total,
+                  ),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -253,10 +269,19 @@ class TopicCard extends StatelessWidget {
                     children: [
                       if (unitName != null)
                         Text(unitName!, style: theme.textTheme.labelSmall),
-                      Text(topic.name, style: theme.textTheme.titleMedium),
+                      Text(
+                        topic.name,
+                        style: locked
+                            ? theme.textTheme.titleMedium?.copyWith(
+                                color: faded,
+                              )
+                            : theme.textTheme.titleMedium,
+                      ),
                       const SizedBox(height: 3),
                       Text(
-                        stats.total == 0
+                        locked
+                            ? 'Locked'
+                            : stats.total == 0
                             ? 'No questions yet'
                             : '${plural(stats.total, 'question')} \u00b7 '
                                   '${stats.seen} answered \u00b7 '
