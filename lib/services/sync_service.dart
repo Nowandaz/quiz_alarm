@@ -568,6 +568,16 @@ class SyncService {
             sectionId,
           ],
         );
+        // How many published questions the topic has on the server (sent
+        // by newer servers): a topic with none is hidden until it has some.
+        if (t['question_count'] is int) {
+          final known = had.isEmpty ? null : had.first['server_questions'];
+          changed |= known != t['question_count'];
+          await txn.rawUpdate(
+            'UPDATE topics SET server_questions = ? WHERE id = ?',
+            [t['question_count'], id],
+          );
+        }
       }
 
       if (full) {

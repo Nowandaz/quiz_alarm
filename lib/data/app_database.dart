@@ -22,7 +22,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 7;
+  static const int schemaVersion = 8;
   static const String fileName = 'brainwake.db';
 
   static Database? _db;
@@ -78,7 +78,8 @@ class AppDatabase {
         is_custom INTEGER NOT NULL DEFAULT 0,
         description TEXT NOT NULL DEFAULT '',
         access TEXT NOT NULL DEFAULT 'paid',
-        section_id TEXT
+        section_id TEXT,
+        server_questions INTEGER
       )''');
     batch.execute(_createSections);
     batch.execute('''
@@ -258,6 +259,13 @@ class AppDatabase {
       // section yet keep section_id NULL.
       await db.execute(_createSections);
       await db.execute('ALTER TABLE topics ADD COLUMN section_id TEXT');
+    }
+    if (from < 8) {
+      // How many published questions the server has for the topic (NULL =
+      // not known). A topic with none is still being written: it is hidden.
+      await db.execute(
+        'ALTER TABLE topics ADD COLUMN server_questions INTEGER',
+      );
     }
   }
 

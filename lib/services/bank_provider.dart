@@ -41,7 +41,10 @@ class BankProvider extends ChangeNotifier {
       final t = await QuestionRepository.getTopics();
       final s = await QuestionRepository.getStats();
       archived = await QuestionRepository.getArchivedUnits();
-      units = u;
+      // A unit with nothing to show in it yet (its outline is still being
+      // written) is left out.
+      final used = {for (final topic in t) topic.unitId};
+      units = u.where((unit) => used.contains(unit.id)).toList();
       sections = x;
       topics = t;
       stats = s;

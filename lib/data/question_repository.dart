@@ -336,7 +336,13 @@ class QuestionRepository {
   static Future<List<Topic>> getTopics() async {
     await ensureReady();
     final rows = await (await _db).rawQuery(
+      // A bank topic the server says has no published question yet is
+      // part of the outline still being written: it is not shown (it
+      // would otherwise look like a locked topic with nothing behind it).
       'SELECT t.* FROM topics t JOIN units u ON u.id = t.unit_id '
+      'WHERE t.is_custom = 1 OR t.server_questions IS NULL '
+      'OR t.server_questions > 0 '
+      'OR EXISTS (SELECT 1 FROM questions q WHERE q.topic_id = t.id) '
       'ORDER BY u.sort_order, u.name, t.sort_order, t.name',
     );
     return rows.map(_topicFromRow).toList();
