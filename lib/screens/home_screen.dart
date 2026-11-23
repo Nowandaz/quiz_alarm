@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../services/alarm_provider.dart';
 import '../services/billing.dart';
 import '../services/entitlements.dart';
+import '../services/update_check.dart';
 import '../services/guest_mode.dart';
 import '../widgets/lock_prompt.dart';
 import '../services/system_bridge.dart';
@@ -165,6 +166,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _checkPayment();
     // The plan may have changed, or run out, while the app was away.
     Entitlements.instance.refresh();
+    // Coming back to the app is also a moment to look for an update.
+    UpdateCheck.run();
     if (!Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
       SystemBridge.setAlarmScreen(false);
     }
@@ -504,6 +507,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+              const UpdateBanner(),
               ListenableBuilder(
                 listenable: Entitlements.instance,
                 builder: (context, _) => Entitlements.instance.needsCheck

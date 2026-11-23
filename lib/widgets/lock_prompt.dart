@@ -10,6 +10,7 @@ import '../models/models.dart';
 import '../screens/account_screen.dart';
 import '../screens/upgrade_screen.dart';
 import '../services/entitlements.dart';
+import '../services/update_check.dart';
 import 'app_widgets.dart';
 
 /// Opens the sign in / create account screen. It closes by itself once
@@ -271,6 +272,76 @@ class _PlanEndingBannerState extends State<PlanEndingBanner> {
 
 /// The banner on the home screen while a paid plan cannot be confirmed.
 /// It does not block anything: alarms keep working.
+/// "A new version is out", with the way to get it. Shown on the home
+/// screen while [UpdateCheck.available] has something.
+class UpdateBanner extends StatelessWidget {
+  const UpdateBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<AppRelease?>(
+      valueListenable: UpdateCheck.available,
+      builder: (context, release, _) {
+        if (release == null) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+          decoration: BoxDecoration(
+            color: scheme.primaryContainer,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.system_update_rounded,
+                color: scheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Version ${release.version} is out',
+                      style: TextStyle(
+                        color: scheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      release.notes.isEmpty
+                          ? 'Download it and install over this one. '
+                                'Your alarms and progress stay.'
+                          : release.notes,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: scheme.onPrimaryContainer,
+                        height: 1.3,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: UpdateCheck.dismiss,
+                child: const Text('Later'),
+              ),
+              FilledButton(
+                onPressed: UpdateCheck.open,
+                child: const Text('Get it'),
+              ),
+              const SizedBox(width: 6),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 class PlanCheckBanner extends StatefulWidget {
   const PlanCheckBanner({super.key});
 

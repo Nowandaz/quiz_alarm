@@ -21,6 +21,9 @@ class ServerConfig {
   static const String privacyUrl =
       'https://amkausome.onrender.com/privacy.html';
 
+  /// Where the app is downloaded and updated from.
+  static const String downloadUrl = 'https://amkausome.onrender.com/#download';
+
   /// The Google Cloud "web" client the server checks Google sign-ins
   /// against (a public identifier, not a secret).
   static const String googleWebClientId =
