@@ -1,4 +1,4 @@
-package com.example.quiz_alarm
+package com.brainoclock.app
 
 import android.app.admin.DeviceAdminReceiver
 import android.app.admin.DevicePolicyManager

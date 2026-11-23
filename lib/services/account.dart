@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import 'google_native.dart';
 import 'profile_picture.dart';
 import 'server_config.dart';
 import 'sync_service.dart';
@@ -317,6 +318,23 @@ class Account extends ChangeNotifier {
         .toString();
   }
 
+  /// Signs in with the proof Android's own Google account picker gave
+  /// (see google_native.dart). Returns null on success, otherwise a
+  /// sentence to show.
+  Future<String?> signInWithGoogleToken(String idToken) async {
+    try {
+      final res = await _post('/token?grant_type=id_token', {
+        'provider': 'google',
+        'id_token': idToken,
+      });
+      if (res.statusCode != 200) return _reason(res);
+      await _adopt(jsonDecode(utf8.decode(res.bodyBytes)));
+      return null;
+    } catch (e) {
+      return _network(e);
+    }
+  }
+
   /// Finishes Google sign-in with the link the browser came back with.
   /// Returns null on success, otherwise a sentence to show.
   Future<String?> completeOAuth(Uri link) async {
@@ -468,6 +486,8 @@ class Account extends ChangeNotifier {
   Future<void> signOut() async {
     final token = _accessToken;
     await _clear();
+    // So the Google account picker asks again next time.
+    unawaited(GoogleNative.forget());
     if (token == null) return;
     try {
       // "local": this phone only. Without it every device signed in to
