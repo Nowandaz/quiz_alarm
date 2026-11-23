@@ -2,7 +2,9 @@
 ///
 /// Tables:
 /// - `units`      course units (Pharmacology, ...)
-/// - `topics`     subtopics of a unit
+/// - `sections`   the subunits and sections of a unit: a unit holds
+///                sections directly, or subunits that hold sections
+/// - `topics`     topics of a unit, each filed under a section (or not)
 /// - `questions`  questions with their answer AND explanation, so the
 ///                bank works fully offline
 /// - `attempts`   every answer the user gave, with what they answered and
@@ -20,7 +22,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 6;
+  static const int schemaVersion = 7;
   static const String fileName = 'brainwake.db';
 
   static Database? _db;
@@ -75,8 +77,10 @@ class AppDatabase {
         sort_order INTEGER NOT NULL DEFAULT 0,
         is_custom INTEGER NOT NULL DEFAULT 0,
         description TEXT NOT NULL DEFAULT '',
-        access TEXT NOT NULL DEFAULT 'paid'
+        access TEXT NOT NULL DEFAULT 'paid',
+        section_id TEXT
       )''');
+    batch.execute(_createSections);
     batch.execute('''
       CREATE TABLE questions(
         id TEXT PRIMARY KEY,
@@ -125,6 +129,20 @@ class AppDatabase {
     }
     await batch.commit(noResult: true);
   }
+
+  /// Subunits (kind 'subunit', no parent) and sections (kind 'section',
+  /// parent = a subunit of the same unit, or none: straight under the
+  /// unit). A topic points at its section with `topics.section_id`.
+  static const String _createSections = '''
+    CREATE TABLE sections(
+      id TEXT PRIMARY KEY,
+      unit_id TEXT NOT NULL REFERENCES units(id) ON DELETE CASCADE,
+      parent_id TEXT,
+      kind TEXT NOT NULL DEFAULT 'section',
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )''';
 
   static const String _createSessions = '''
     CREATE TABLE sessions(
@@ -234,6 +252,12 @@ class AppDatabase {
       for (final sql in _createQuestionFlags) {
         await db.execute(sql);
       }
+    }
+    if (from < 7) {
+      // Unit -> (subunit) -> section -> topic. Topics not filed under a
+      // section yet keep section_id NULL.
+      await db.execute(_createSections);
+      await db.execute('ALTER TABLE topics ADD COLUMN section_id TEXT');
     }
   }
 

@@ -1,8 +1,10 @@
-/// Multi-select of topics: units are listed first and open to show their
-/// topics; with a search box and "all" tick boxes. Used when choosing what an
-/// alarm asks about and what a revision session covers. Archived units are
-/// left out, unless one of their topics was already ticked. Topics the
-/// plan does not open are listed with a lock and cannot be ticked.
+/// Multi-select of topics, as a tree: unit, then its subunits and sections,
+/// then topics. Each level opens when tapped and has a tick box that ticks
+/// everything beneath it. With a search box and an "all" tick box. Used
+/// when choosing what an alarm asks about and what a revision session
+/// covers. Archived units are left out, unless one of their topics was
+/// already ticked. Topics the plan does not open are listed with a lock
+/// and cannot be ticked.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -29,7 +31,8 @@ class TopicPicker extends StatefulWidget {
 
 class _TopicPickerState extends State<TopicPicker> {
   final TextEditingController _search = TextEditingController();
-  final Set<String> _open = {}; // units whose topics are showing
+  // Units, subunits and sections that are open (showing what they hold).
+  final Set<String> _open = {};
   String _query = '';
 
   // Topics ticked when the picker opened. An archived unit holding one of
@@ -70,6 +73,13 @@ class _TopicPickerState extends State<TopicPicker> {
         : {...widget.selected, id},
   );
 
+  void _toggleOpen(String id) => setState(() {
+    if (!_open.remove(id)) _open.add(id);
+  });
+
+  /// Indent of a row [depth] levels below the unit.
+  static double _indent(int depth) => 8.0 + 22 * depth;
+
   @override
   Widget build(BuildContext context) {
     final bank = context.watch<BankProvider>();
@@ -96,14 +106,14 @@ class _TopicPickerState extends State<TopicPicker> {
           if (bank.isOpen(t)) t.id,
     };
 
-    Widget topicRow(Topic topic) {
+    Widget topicRow(Topic topic, [int depth = 1]) {
       final locked = !bank.isOpen(topic);
       final count = bank.statsOf(topic.id).total;
       return InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: locked ? null : () => _toggle(topic.id),
         child: Padding(
-          padding: const EdgeInsets.only(left: 30),
+          padding: EdgeInsets.only(left: _indent(depth)),
           child: Row(
             children: [
               Checkbox(
@@ -140,16 +150,109 @@ class _TopicPickerState extends State<TopicPicker> {
       );
     }
 
+    // A subunit or section: tick = every open topic beneath it, tap =
+    // show what it holds. Closed until tapped.
+    List<Widget> sectionRows(Section section, int depth) {
+      final topics = bank.topicsUnder(section.id);
+      // A section holding one topic is shown as that topic.
+      if (!section.isSubunit && topics.length == 1) {
+        return [topicRow(topics.single, depth)];
+      }
+      final ids = topics.where(bank.isOpen).map((t) => t.id).toSet();
+      final open = _open.contains(section.id);
+      final children = section.isSubunit
+          ? bank.filledChildrenOf(section.id)
+          : const <Section>[];
+      return [
+        InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () => _toggleOpen(section.id),
+          child: Padding(
+            padding: EdgeInsets.only(left: _indent(depth)),
+            child: Row(
+              children: [
+                Checkbox(
+                  tristate: true,
+                  value: _state(ids),
+                  onChanged: ids.isEmpty ? null : (_) => _toggleAll(ids),
+                ),
+                Expanded(
+                  child: Text(
+                    section.name,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: ids.isEmpty
+                          ? scheme.onSurface.withValues(alpha: 0.45)
+                          : null,
+                    ),
+                  ),
+                ),
+                if (ids.isEmpty)
+                  Icon(
+                    Icons.lock_rounded,
+                    size: 16,
+                    color: scheme.onSurface.withValues(alpha: 0.45),
+                    semanticLabel: 'Locked',
+                  )
+                else
+                  Text(
+                    plural(topics.length, 'topic'),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: AnimatedRotation(
+                    turns: open ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: Icon(
+                      Icons.expand_more_rounded,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (open)
+          // A subunit with one section shows that section's topics.
+          if (children.length > 1)
+            for (final child in children) ...sectionRows(child, depth + 1)
+          else
+            for (final t in topics) topicRow(t, depth + 1),
+      ];
+    }
+
+    // What an open unit shows: its subunits and sections, then the topics
+    // that are in no section.
+    List<Widget> tree(StudyUnit unit) {
+      final sections = bank.filledSectionsOf(unit.id);
+      return [
+        for (final section in sections) ...sectionRows(section, 1),
+        for (final t
+            in sections.isEmpty
+                ? bank.topicsOf(unit.id)
+                : bank.unfiledTopics(unit.id))
+          topicRow(t),
+      ];
+    }
+
     var anyMatch = false;
     final unitBlocks = <Widget>[];
     for (final unit in units) {
       final topics = bank.topicsOf(unit.id);
       final unitMatches = unit.name.toLowerCase().contains(q);
       // While searching, show a unit's matching topics (or all of them if
-      // the unit itself matches).
+      // the unit itself matches) as a plain list. A topic also matches by
+      // the name of its section or subunit.
       final shown = !searching || unitMatches
           ? topics
-          : topics.where((t) => t.name.toLowerCase().contains(q)).toList();
+          : topics
+                .where(
+                  (t) =>
+                      t.name.toLowerCase().contains(q) ||
+                      bank.sectionMatches(t, q),
+                )
+                .toList();
       if (searching && shown.isEmpty) continue;
       anyMatch = true;
 
@@ -173,11 +276,7 @@ class _TopicPickerState extends State<TopicPicker> {
               // The unit: tick = all its topics, tap = show its topics.
               InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: searching
-                    ? null
-                    : () => setState(() {
-                        if (!_open.remove(unit.id)) _open.add(unit.id);
-                      }),
+                onTap: searching ? null : () => _toggleOpen(unit.id),
                 child: Row(
                   children: [
                     Checkbox(
@@ -229,7 +328,10 @@ class _TopicPickerState extends State<TopicPicker> {
                     ? const SizedBox(width: double.infinity)
                     : Column(
                         children: [
-                          for (final t in shown) topicRow(t),
+                          if (searching)
+                            for (final t in shown) topicRow(t)
+                          else
+                            ...tree(unit),
                           const SizedBox(height: 6),
                         ],
                       ),
@@ -248,7 +350,7 @@ class _TopicPickerState extends State<TopicPicker> {
           onChanged: (v) => setState(() => _query = v),
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            hintText: 'Search units and topics',
+            hintText: 'Search units, sections and topics',
             prefixIcon: const Icon(Icons.search_rounded),
             isDense: true,
             suffixIcon: _query.isEmpty

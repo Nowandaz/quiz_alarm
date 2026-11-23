@@ -22,7 +22,40 @@ class StudyUnit {
   });
 }
 
-/// A subtopic inside a unit, e.g. "Antimicrobials".
+/// A subunit or a section of a unit. A unit holds sections directly
+/// ("Pharmacology" > "ANS"), or subunits that hold sections
+/// ("Pathology" > "Haematology" > "Blood film"). Topics sit in sections.
+class Section {
+  static const String subunitKind = 'subunit';
+  static const String sectionKind = 'section';
+
+  final String id;
+  final String unitId;
+
+  /// For a section inside a subunit: the subunit's id. Null for a
+  /// subunit, and for a section straight under the unit.
+  final String? parentId;
+
+  /// [subunitKind] or [sectionKind].
+  final String kind;
+  final String name;
+  final String description;
+  final int sortOrder;
+
+  const Section({
+    required this.id,
+    required this.unitId,
+    this.parentId,
+    this.kind = sectionKind,
+    required this.name,
+    this.description = '',
+    this.sortOrder = 0,
+  });
+
+  bool get isSubunit => kind == subunitKind;
+}
+
+/// A topic inside a unit, e.g. "Antimicrobials".
 class Topic {
   final String id;
   final String unitId;
@@ -38,6 +71,10 @@ class Topic {
   /// A topic the user made counts as 'free' whatever is stored here.
   final String access;
 
+  /// The [Section] the topic is filed under. Null = not filed (a topic
+  /// the user made, or one the bank has not sorted yet).
+  final String? sectionId;
+
   const Topic({
     required this.id,
     required this.unitId,
@@ -45,6 +82,7 @@ class Topic {
     this.isCustom = false,
     this.description = '',
     this.access = 'paid',
+    this.sectionId,
   });
 }
 
@@ -343,7 +381,9 @@ class AlarmItem {
   final int id; // 32-bit integer required by native Android AlarmManager
   TimeOfDay time;
 
-  /// Topic or unit ids to draw questions from. Empty means "any topic".
+  /// Topic, section, subunit or unit ids to draw questions from. Empty
+  /// means "any topic". A section, subunit or unit id stands for every
+  /// topic inside it, also ones added later.
   /// (Alarms saved by older versions hold topic names; those still resolve.)
   List<String> topics;
   bool isEnabled;

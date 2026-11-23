@@ -22,7 +22,8 @@ class ServerConfig {
       'https://brainoclock.onrender.com/privacy.html';
 
   /// Where the app is downloaded and updated from.
-  static const String downloadUrl = 'https://brainoclock.onrender.com/#download';
+  static const String downloadUrl =
+      'https://brainoclock.onrender.com/#download';
 
   /// The Google Cloud "web" client the server checks Google sign-ins
   /// against (a public identifier, not a secret).

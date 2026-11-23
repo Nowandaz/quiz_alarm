@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "unit": {
     "id": "pathology",
     "name": "Pathology",
@@ -10,6 +10,8 @@
     {
       "id": "path-haematology-spotters",
       "name": "Haematology spotters",
+      "subunit": "Haematology",
+      "section": "Blood film",
       "questions": [
         {
           "id": "path-haem-001",
@@ -119,6 +121,8 @@
     {
       "id": "path-histology-spotters",
       "name": "Histopathology spotters",
+      "subunit": "Anatomical pathology",
+      "section": "Histopathology",
       "questions": [
         {
           "id": "path-hist-001",
