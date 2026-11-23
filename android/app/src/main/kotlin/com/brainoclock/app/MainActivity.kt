@@ -37,6 +37,8 @@ import io.flutter.plugin.common.MethodChannel
  *    notification (shown by PreAlarmReceiver); takeSkipAlarm / skipAlarm
  *    hand its "Skip" tap to the Dart side.
  *  - deviceInfo / exitReasons: details attached to problem reports.
+ *  - installKey: an identifier of this phone that survives reinstalling,
+ *    so the usage count does not count one phone twice.
  *  - openAutostartSettings: the phone maker's "autostart" page, where some
  *    brands decide whether an app may start by itself after a restart.
  *  - setAlarmScreen: while an alarm rings the screen is kept awake (also
@@ -321,6 +323,22 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                         result.success(opened)
+                    }
+                    "installKey" -> {
+                        // Android's own identifier for this app on this
+                        // phone. It stays the same when the app is
+                        // uninstalled and installed again, so one phone is
+                        // counted once. (The Dart side only ever sends a
+                        // scrambled form of it.)
+                        result.success(
+                            try {
+                                Settings.Secure.getString(
+                                    contentResolver, Settings.Secure.ANDROID_ID
+                                ) ?: ""
+                            } catch (e: Exception) {
+                                ""
+                            }
+                        )
                     }
                     "deviceInfo" -> {
                         result.success(

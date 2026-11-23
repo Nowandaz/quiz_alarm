@@ -152,6 +152,18 @@ class SystemBridge {
     }
   }
 
+  /// Android's identifier for this app on this phone (empty when it
+  /// cannot be read). It survives uninstalling and reinstalling.
+  static Future<String> installKey() async {
+    if (!_android) return '';
+    try {
+      return (await _channel.invokeMethod<String>('installKey')) ?? '';
+    } catch (e) {
+      debugPrint('Reading the install key failed: $e');
+      return '';
+    }
+  }
+
   /// Phone model and Android version, for problem reports.
   static Future<Map<String, dynamic>> deviceInfo() async {
     if (!_android) {
