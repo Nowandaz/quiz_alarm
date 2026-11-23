@@ -48,6 +48,8 @@ class UsagePing {
       _sending ??= _send().whenComplete(() => _sending = null);
 
   static Future<bool> _send() async {
+    // Browser builds are previews and tests, not phones: never counted.
+    if (kIsWeb) return false;
     try {
       final prefs = await SharedPreferences.getInstance();
       final t = now();
