@@ -299,16 +299,26 @@ class _TopicScreenState extends State<TopicScreen> {
                         ),
                       },
                       title: Text(q.questionText),
-                      subtitle: Text(
-                        '${switch (_progress[q.id]) {
-                          true => 'Done, correct',
-                          false => 'Done, wrong last time',
-                          null => 'Not done',
-                        }}'
-                        ' \u00b7 ${q.type == QuestionType.mcq ? 'Multiple choice' : 'Short answer'}'
-                        '${q.image.isNotEmpty ? ' \u00b7 Picture' : ''}'
-                        '${q.source == 'ai' ? ' \u00b7 AI generated' : ''}',
-                        style: theme.textTheme.bodySmall,
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${switch (_progress[q.id]) {
+                              true => 'Done, correct',
+                              false => 'Done, wrong last time',
+                              null => 'Not done',
+                            }}'
+                            ' \u00b7 ${q.typeLabel}'
+                            '${q.image.isNotEmpty ? ' \u00b7 Picture' : ''}'
+                            '${q.source == 'ai' ? ' \u00b7 AI generated' : ''}',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                          if (q.longAnswer)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Pill(q.marksLabel),
+                            ),
+                        ],
                       ),
                       expandedCrossAxisAlignment: CrossAxisAlignment.start,
                       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -328,7 +338,8 @@ class _TopicScreenState extends State<TopicScreen> {
                           ),
                         if (q.options.isEmpty)
                           Text(
-                            'Answer: ${q.correctAnswer}',
+                            '${q.longAnswer ? 'Model answer' : 'Answer'}: '
+                            '${q.correctAnswer}',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                         const SizedBox(height: 8),

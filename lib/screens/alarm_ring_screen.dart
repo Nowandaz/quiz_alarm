@@ -192,6 +192,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       q = await QuestionService.nextQuestion(
         widget.alarm.topics,
         exclude: _shown,
+        // Nobody half asleep can type four points (also in a preview).
+        longAnswers: false,
       );
     } catch (e) {
       debugPrint('Could not load a question: $e');

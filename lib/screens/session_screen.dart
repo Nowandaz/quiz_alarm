@@ -12,6 +12,7 @@ import '../data/question_repository.dart';
 import '../models/models.dart';
 import '../services/theme_provider.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_widgets.dart';
 import '../widgets/question_image.dart';
 import 'flag_sheet.dart';
 import 'tabs/reports_tab.dart' show formatDuration;
@@ -173,6 +174,10 @@ class _SessionScreenState extends State<SessionScreen> {
               q.questionText,
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
+            if (q.longAnswer) ...[
+              const SizedBox(height: 6),
+              Pill(q.marksLabel),
+            ],
             const SizedBox(height: 8),
             Text(
               a.userAnswer.isEmpty
@@ -182,7 +187,8 @@ class _SessionScreenState extends State<SessionScreen> {
             ),
             if (!a.correct)
               Text(
-                'Correct answer: ${q.correctAnswer}',
+                '${q.longAnswer ? 'Model answer' : 'Correct answer'}: '
+                '${q.correctAnswer}',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             if (q.explanation.trim().isNotEmpty) ...[

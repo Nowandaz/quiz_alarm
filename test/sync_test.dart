@@ -40,6 +40,10 @@ class FakeServer {
   /// Set to make reading `sections` fail with this status.
   int? failSections;
 
+  /// Set to answer as a server from before marks and long answers: it
+  /// refuses a request that names those columns.
+  bool noMarks = false;
+
   void unit(String id, {bool premium = false, String? deletedAt}) =>
       tables['units']!.add({
         'id': id,
@@ -148,6 +152,10 @@ class FakeServer {
         ]),
         200,
       );
+    }
+    if (noMarks &&
+        (request.url.queryParameters['select'] ?? '').contains('marks')) {
+      return http.Response('{"code":"42703"}', 400);
     }
     if (table == 'sections' && failSections != null) {
       return http.Response('{}', failSections!);
@@ -318,6 +326,102 @@ void main() {
       );
       expect(asked.url.queryParameters['updated_at'], startsWith('gte.'));
       expect(await localQuestionIds('server'), ['b']);
+    });
+
+    test('marks and long answers: the header is sent and the fields are '
+        'stored', () async {
+      await start();
+      server.unit('u');
+      server.topic('t', 'u');
+      server.question('plain', 't');
+      server.question('long', 't')
+        ..['answer'] = 'Sedation; amnesia'
+        ..['marks'] = 2
+        ..['long_answer'] = true
+        ..['key_points'] = [
+          ['sedation', 'anxiolysis'],
+          ['amnesia'],
+        ];
+      await SyncService.run();
+
+      final stored = await QuestionRepository.getQuestions('t');
+      final long = stored.firstWhere((q) => q.id == 'long');
+      expect(long.type, QuestionType.saq);
+      expect(long.longAnswer, isTrue);
+      expect(long.marks, 2);
+      expect(long.keyPoints, [
+        ['sedation', 'anxiolysis'],
+        ['amnesia'],
+      ]);
+      expect(long.correctAnswer, 'Sedation; amnesia');
+      // A row without the fields is an ordinary question.
+      final plain = stored.firstWhere((q) => q.id == 'plain');
+      expect(plain.longAnswer, isFalse);
+      expect(plain.marks, 1);
+      expect(plain.keyPoints, isEmpty);
+
+      expect(server.requests, isNotEmpty);
+      for (final r in server.requests) {
+        expect(r.headers['X-App-Features'], 'long-answers', reason: '${r.url}');
+      }
+      final asked = server.requests.firstWhere(
+        (r) => r.url.path.endsWith('/questions'),
+      );
+      expect(
+        asked.url.queryParameters['select'],
+        contains('marks,long_answer,key_points'),
+      );
+
+      // An edit on the server (no longer a long answer) arrives too.
+      server.tables['questions']!.last
+        ..['long_answer'] = false
+        ..['marks'] = 1
+        ..['key_points'] = <dynamic>[]
+        ..['updated_at'] = DateTime.now().toUtc().toIso8601String();
+      await SyncService.run();
+      final again = (await QuestionRepository.getQuestions('t'))
+          .firstWhere((q) => q.id == 'long');
+      expect(again.longAnswer, isFalse);
+      expect(again.keyPoints, isEmpty);
+    });
+
+    test('a server from before marks still fills the bank', () async {
+      await start();
+      server.unit('u');
+      server.topic('t', 'u');
+      server.question('plain', 't');
+      server.noMarks = true;
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      final q = (await QuestionRepository.getQuestions('t')).single;
+      expect(q.marks, 1);
+      expect(q.longAnswer, isFalse);
+    });
+
+    test('own questions are uploaded without the new fields', () async {
+      await start(signedIn: true);
+      server.unit('u');
+      server.topic('t', 'u');
+      server.question('plain', 't');
+      await SyncService.run();
+      final topic = await QuestionRepository.addCustomTopic('Mine');
+      await QuestionRepository.addQuestion(
+        Question(
+          id: 'ai_mine',
+          topicId: topic.id,
+          topic: topic.name,
+          type: QuestionType.saq,
+          questionText: 'Mine?',
+          correctAnswer: 'Yes',
+          source: 'ai',
+        ),
+      );
+      await SyncService.run();
+      final sent = server.tables['user_questions']!.single;
+      expect(sent['id'], 'ai_mine');
+      for (final key in ['marks', 'long_answer', 'key_points']) {
+        expect(sent.containsKey(key), isFalse, reason: key);
+      }
     });
 
     test('a failed or empty download never wipes the bank', () async {

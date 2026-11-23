@@ -22,8 +22,12 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 8;
+  static const int schemaVersion = 9;
   static const String fileName = 'brainwake.db';
+
+  /// Meta key: when the whole bank was last compared with the server
+  /// (see lib/services/sync_service.dart).
+  static const String bankFullKey = 'bank_full_at';
 
   static Database? _db;
   static Future<Database>? _opening;
@@ -96,7 +100,10 @@ class AppDatabase {
         image TEXT NOT NULL DEFAULT '',
         source TEXT NOT NULL DEFAULT 'seed',
         created_at INTEGER NOT NULL,
-        synced INTEGER NOT NULL DEFAULT 0
+        synced INTEGER NOT NULL DEFAULT 0,
+        marks INTEGER NOT NULL DEFAULT 1,
+        long_answer INTEGER NOT NULL DEFAULT 0,
+        key_points TEXT NOT NULL DEFAULT '[]'
       )''');
     batch.execute(
       'CREATE UNIQUE INDEX idx_questions_unique ON questions(topic_id, text_key)',
@@ -266,6 +273,22 @@ class AppDatabase {
       await db.execute(
         'ALTER TABLE topics ADD COLUMN server_questions INTEGER',
       );
+    }
+    if (from < 9) {
+      // Marks, and "long answer" questions with the points that earn them
+      // (asked in practice only, never while an alarm rings).
+      await db.execute(
+        'ALTER TABLE questions ADD COLUMN marks INTEGER NOT NULL DEFAULT 1',
+      );
+      await db.execute(
+        'ALTER TABLE questions ADD COLUMN long_answer INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute(
+        "ALTER TABLE questions ADD COLUMN key_points TEXT NOT NULL DEFAULT '[]'",
+      );
+      // Long answer questions already on the server did not change, so
+      // only a whole comparison brings them: make the next sync one.
+      await db.delete('meta', where: 'key = ?', whereArgs: [bankFullKey]);
     }
   }
 

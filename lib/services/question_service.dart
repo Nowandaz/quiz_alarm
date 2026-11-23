@@ -17,7 +17,9 @@ import '../models/models.dart';
 import 'ai_client.dart';
 import 'answer_grader.dart';
 import 'entitlements.dart';
+import 'long_answer_grader.dart';
 
+export 'long_answer_grader.dart' show LongAnswerResult;
 export 'answer_grader.dart' show GradeResult;
 
 // ---------------------------------------------------------------------------
@@ -80,13 +82,21 @@ class QuestionService {
 
   /// Next question for [selectors] (topic/unit ids; empty = any topic),
   /// from the local database only. Null when the bank is empty.
+  /// [longAnswers] false leaves out long answer questions (an alarm never
+  /// asks one); by default only an alarm ([repeat]) leaves them out.
   static Future<Question?> nextQuestion(
     List<String> selectors, {
     Set<String> exclude = const {},
     bool repeat = true,
+    bool? longAnswers,
   }) async {
     final ids = await QuestionRepository.resolveTopicIds(selectors);
-    return QuestionRepository.pickNext(ids, exclude: exclude, repeat: repeat);
+    return QuestionRepository.pickNext(
+      ids,
+      exclude: exclude,
+      repeat: repeat,
+      longAnswers: longAnswers,
+    );
   }
 
   // --------------------------------------------------------------- grading
@@ -133,6 +143,20 @@ class QuestionService {
       await _loadKnownTerms();
     }
     return gradeLocally(q, userAnswer);
+  }
+
+  /// Marks a long answer on the phone: how many of the question's key
+  /// points the typed text has.
+  static Future<LongAnswerResult> gradeLong(
+    Question q,
+    String userAnswer,
+  ) async {
+    if (userAnswer.trim().isNotEmpty) await _loadKnownTerms();
+    return LongAnswerGrader.grade(
+      userAnswer,
+      keyPoints: q.keyPoints,
+      marks: q.marks,
+    );
   }
 
   static int _knownFor = -1;

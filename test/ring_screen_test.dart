@@ -62,7 +62,13 @@ void main() {
   }
 
   /// Opens "Test alarm screen" on a topic holding one typed question.
-  Future<void> ring(WidgetTester tester, {required String answer}) async {
+  /// With [longAnswers], the topic also holds that many long answer
+  /// questions.
+  Future<void> ring(
+    WidgetTester tester, {
+    required String answer,
+    int longAnswers = 0,
+  }) async {
     final topicId = await tester.runAsync(() async {
       await QuestionRepository.ensureReady();
       final topic = await QuestionRepository.addCustomTopic('Ring test');
@@ -76,6 +82,26 @@ void main() {
           correctAnswer: answer,
         ),
       );
+      for (var i = 0; i < longAnswers; i++) {
+        await QuestionRepository.addQuestion(
+          Question(
+            id: 'ring-long-$i',
+            topicId: topic.id,
+            topic: topic.name,
+            type: QuestionType.saq,
+            questionText: 'List 4 aims of pre-anaesthetic medication ($i).',
+            correctAnswer: 'Sedation; amnesia; antisialagogue; analgesia',
+            marks: 4,
+            longAnswer: true,
+            keyPoints: const [
+              ['sedation'],
+              ['amnesia'],
+              ['antisialagogue'],
+              ['analgesia'],
+            ],
+          ),
+        );
+      }
       return topic.id;
     });
     tester.view.physicalSize = const Size(600, 2400);
@@ -115,6 +141,24 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 300));
   }
+
+  testWidgets('a long answer question is never asked, also in the preview', (
+    tester,
+  ) async {
+    Entitlements.instance.setForTest(PlanLevel.free);
+    await ring(tester, answer: 'N-acetylcysteine', longAnswers: 8);
+    // The topic's one ordinary question, again after it was answered.
+    for (var i = 0; i < 2; i++) {
+      expect(find.text('Antidote for paracetamol overdose?'), findsOneWidget);
+      expect(find.textContaining('List 4 aims'), findsNothing);
+      await type(tester, 'n-acetylcysteine');
+      expect(find.text('Correct!'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+    }
+    expect(find.text('Antidote for paracetamol overdose?'), findsOneWidget);
+    await close(tester);
+  });
 
   testWidgets('a forgiven typo shows the right spelling', (tester) async {
     Entitlements.instance.setForTest(PlanLevel.free);

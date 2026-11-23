@@ -734,6 +734,9 @@ class QuestionRepository {
       'explanation': q.explanation.trim(),
       'image': q.image,
       'source': q.source,
+      'marks': q.marks,
+      'long_answer': q.longAnswer ? 1 : 0,
+      'key_points': jsonEncode(q.keyPoints),
       'created_at': DateTime.now().millisecondsSinceEpoch,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
     final stored = await db.query(
@@ -768,7 +771,9 @@ class QuestionRepository {
     await db.delete('questions', where: 'id = ?', whereArgs: [questionId]);
   }
 
-  static Future<void> recordAttempt(
+  /// Stores one answer. Returns the attempt's id (for
+  /// [setAttemptCorrect]), or null if it could not be saved.
+  static Future<int?> recordAttempt(
     String questionId, {
     required bool correct,
     required String mode,
@@ -777,7 +782,7 @@ class QuestionRepository {
     Duration? timeTaken,
   }) async {
     try {
-      await (await _db).insert('attempts', {
+      final id = await (await _db).insert('attempts', {
         'question_id': questionId,
         'mode': mode,
         'correct': correct ? 1 : 0,
@@ -787,8 +792,27 @@ class QuestionRepository {
         'duration_ms': timeTaken?.inMilliseconds,
       });
       onLocalChange?.call();
+      return id;
     } catch (e) {
       debugPrint('Could not record the answer: $e');
+      return null;
+    }
+  }
+
+  /// Changes the verdict of an answer already stored (the user marked a
+  /// long answer themselves). No second attempt is added.
+  static Future<void> setAttemptCorrect(int? attemptId, bool correct) async {
+    if (attemptId == null) return;
+    try {
+      await (await _db).update(
+        'attempts',
+        {'correct': correct ? 1 : 0, 'synced': 0},
+        where: 'id = ?',
+        whereArgs: [attemptId],
+      );
+      onLocalChange?.call();
+    } catch (e) {
+      debugPrint('Could not change the answer: $e');
     }
   }
 
@@ -840,12 +864,20 @@ class QuestionRepository {
   /// Only open questions are picked (see [_openSql]). The one exception:
   /// an alarm ([repeat]) on a phone with no open question at all still
   /// gets one, because a ringing alarm must always have something to ask.
+  ///
+  /// Long answer questions ([Question.longAnswer]) are for practice only.
+  /// With [longAnswers] false (the default for an alarm, [repeat]) they
+  /// are never picked: a selection made only of them falls back to the
+  /// ordinary questions of every topic, like a selection with nothing in
+  /// it. Null if the phone holds nothing but long answer questions.
   static Future<Question?> pickNext(
     List<String> topicIds, {
     Set<String> exclude = const {},
     bool repeat = true,
+    bool? longAnswers,
     Random? rng,
   }) async {
+    final ordinaryOnly = !(longAnswers ?? !repeat);
     await ensureReady();
     final db = await _db;
     Future<List<Map<String, Object?>>> load(
@@ -860,6 +892,7 @@ class QuestionRepository {
         'LEFT JOIN attempts la ON la.id = '
         '(SELECT MAX(a.id) FROM attempts a WHERE a.question_id = q.id) '
         'WHERE ${openOnly ? _openSql() : '1 = 1'} '
+        '${ordinaryOnly ? 'AND q.long_answer = 0 ' : ''}'
         '${ids.isEmpty ? '' : 'AND q.topic_id IN ($marks)'}',
         ids,
       );
