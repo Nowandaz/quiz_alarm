@@ -125,7 +125,7 @@ screenshots); see the comment at the top of that file.
 
 - Android is the tested target. iOS has the background modes the alarm
   plugin needs but has not been run on a device.
-- The Android application id is still `com.example.quiz_alarm` and release
+- The Android application id is still `com.brainoclock.app` and release
   builds are signed with the debug key. Change both before publishing
   (changing the id makes it a new app on the phone, so existing data is not
   carried over).

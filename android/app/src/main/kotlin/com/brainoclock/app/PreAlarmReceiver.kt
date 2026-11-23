@@ -1,4 +1,4 @@
-package com.example.quiz_alarm
+package com.brainoclock.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -32,7 +32,7 @@ class PreAlarmReceiver : BroadcastReceiver() {
 
         // Three long buzzes in a row (wait, buzz, pause, buzz, pause, buzz).
         private val BUZZ = longArrayOf(0, 1500, 500, 1500, 500, 1500)
-        const val ACTION_SKIP = "com.example.quiz_alarm.SKIP_ALARM"
+        const val ACTION_SKIP = "com.brainoclock.app.SKIP_ALARM"
 
         // Kept apart from the alarm plugin's own notification ids.
         @JvmStatic

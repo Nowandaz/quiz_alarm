@@ -1,4 +1,4 @@
-package com.example.quiz_alarm
+package com.brainoclock.app
 
 import android.app.Activity
 import android.content.Intent

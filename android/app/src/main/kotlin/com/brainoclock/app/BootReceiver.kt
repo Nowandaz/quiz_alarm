@@ -1,4 +1,4 @@
-package com.example.quiz_alarm
+package com.brainoclock.app
 
 import android.content.BroadcastReceiver
 import android.content.Context
