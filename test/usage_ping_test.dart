@@ -91,6 +91,7 @@ void main() {
       'alarms_ok': 1,
       'alarms_missed': 2,
       'alarms': 2,
+      'device': '',
     });
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('install_id'), install);

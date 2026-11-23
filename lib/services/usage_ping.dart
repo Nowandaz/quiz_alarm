@@ -24,6 +24,7 @@ import 'account.dart';
 import 'entitlements.dart';
 import 'server_config.dart';
 import 'sync_service.dart';
+import 'system_bridge.dart';
 
 class UsagePing {
   /// Talks to the server; tests replace it with a fake.
@@ -46,6 +47,23 @@ class UsagePing {
   /// not the one last sent. True when one was sent. Never throws.
   static Future<bool> send() =>
       _sending ??= _send().whenComplete(() => _sending = null);
+
+  /// "Tecno Camon 30 (Android 14)", or empty when it cannot be read.
+  static Future<String> _device() async {
+    try {
+      final d = await SystemBridge.deviceInfo();
+      final maker = '${d['manufacturer'] ?? ''}'.trim();
+      final model = '${d['model'] ?? ''}'.trim();
+      final android = '${d['android'] ?? ''}'.trim();
+      if (model.isEmpty) return '';
+      final name = model.toLowerCase().startsWith(maker.toLowerCase())
+          ? model
+          : '$maker $model'.trim();
+      return android.isEmpty ? name : '$name (Android $android)';
+    } catch (_) {
+      return '';
+    }
+  }
 
   static Future<bool> _send() async {
     // Browser builds are previews and tests, not phones: never counted.
@@ -94,6 +112,9 @@ class UsagePing {
               'alarms_ok': counts?.alarmsOk,
               'alarms_missed': counts?.alarmsMissed,
               'alarms': _alarms(prefs),
+              // The phone's make and model, so the owner can see which
+              // phones the app runs on (and which ones miss alarms).
+              'device': await _device(),
             }),
           )
           .timeout(const Duration(seconds: 5));
