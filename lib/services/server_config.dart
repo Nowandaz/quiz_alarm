@@ -17,12 +17,12 @@ class ServerConfig {
       'https://jarvis-norys.austriaeast.cloudapp.azure.com/brainwake';
 
   /// The legal pages (hosted with the admin site; public).
-  static const String termsUrl = 'https://amkausome.onrender.com/terms.html';
+  static const String termsUrl = 'https://brainoclock.onrender.com/terms.html';
   static const String privacyUrl =
-      'https://amkausome.onrender.com/privacy.html';
+      'https://brainoclock.onrender.com/privacy.html';
 
   /// Where the app is downloaded and updated from.
-  static const String downloadUrl = 'https://amkausome.onrender.com/#download';
+  static const String downloadUrl = 'https://brainoclock.onrender.com/#download';
 
   /// The Google Cloud "web" client the server checks Google sign-ins
   /// against (a public identifier, not a secret).
