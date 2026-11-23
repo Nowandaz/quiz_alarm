@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -65,6 +66,26 @@ class UsagePing {
     }
   }
 
+  /// Reads the phone's identifier; tests replace it.
+  @visibleForTesting
+  static Future<String> Function() readInstallKey = SystemBridge.installKey;
+
+  /// A number in the usual 8-4-4-4-12 form worked out from the phone's
+  /// identifier (never the identifier itself), or null when there is none.
+  static Future<String?> stableId() async {
+    try {
+      final key = (await readInstallKey()).trim();
+      if (key.isEmpty) return null;
+      final h = sha256
+          .convert(utf8.encode('brainoclock-install:$key'))
+          .toString();
+      return '${h.substring(0, 8)}-${h.substring(8, 12)}-4${h.substring(13, 16)}-'
+          'a${h.substring(17, 20)}-${h.substring(20, 32)}';
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<bool> _send() async {
     // Browser builds are previews and tests, not phones: never counted.
     if (kIsWeb) return false;
@@ -80,9 +101,16 @@ class UsagePing {
         return false;
       }
 
-      var install = prefs.getString(installPref);
-      if (install == null) {
-        install = AlarmLog.newUuid();
+      // The number this phone is counted under. Preferably one worked
+      // out from Android's own identifier for the app on this phone, which
+      // stays the same across reinstalls; otherwise a random one. A phone
+      // that was counted under a random number before says so once
+      // ("replaces"), so the server keeps one row for it.
+      final stored = prefs.getString(installPref);
+      final stable = await stableId();
+      final install = stable ?? stored ?? AlarmLog.newUuid();
+      final replaces = stored != null && stored != install ? stored : null;
+      if (stable == null && stored == null) {
         await prefs.setString(installPref, install);
       }
       // On unless switched off, as in Settings.
@@ -115,10 +143,12 @@ class UsagePing {
               // The phone's make and model, so the owner can see which
               // phones the app runs on (and which ones miss alarms).
               'device': await _device(),
+              'replaces': ?replaces,
             }),
           )
           .timeout(const Duration(seconds: 5));
       if (res.statusCode < 200 || res.statusCode >= 300) return false;
+      await prefs.setString(installPref, install);
       await prefs.setString(dayPref, day);
       await prefs.setString(levelPref, level);
       return true;

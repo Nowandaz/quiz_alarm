@@ -39,6 +39,7 @@ void main() {
 
   tearDown(() {
     UsagePing.now = DateTime.now;
+    UsagePing.readInstallKey = () async => '';
     openAllFeatures();
   });
 
@@ -171,5 +172,33 @@ void main() {
     });
     expect(await UsagePing.send(), isTrue);
     expect(calls, hasLength(1));
+  });
+
+  test('a phone keeps one number across reinstalls, and hands over the '
+      'random one it was counted under before', () async {
+    await start(prefs: {'install_id': 'old-random-number'});
+    UsagePing.readInstallKey = () async => 'a1b2c3d4e5f6';
+    final stable = await UsagePing.stableId();
+    expect(
+      stable,
+      matches(
+        RegExp(
+          r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$',
+        ),
+      ),
+    );
+    expect(stable, isNot(contains('a1b2c3d4e5f6')), reason: 'never the raw id');
+
+    expect(await UsagePing.send(), isTrue);
+    expect(body(calls.single)['install'], stable);
+    expect(body(calls.single)['replaces'], 'old-random-number');
+
+    // "Reinstalled": nothing saved, same phone, same number, nothing to
+    // replace.
+    SharedPreferences.setMockInitialValues({});
+    calls.clear();
+    expect(await UsagePing.send(), isTrue);
+    expect(body(calls.single)['install'], stable);
+    expect(body(calls.single).containsKey('replaces'), isFalse);
   });
 }
