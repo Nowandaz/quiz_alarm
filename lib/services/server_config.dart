@@ -20,4 +20,9 @@ class ServerConfig {
   static const String termsUrl = 'https://amkausome.onrender.com/terms.html';
   static const String privacyUrl =
       'https://amkausome.onrender.com/privacy.html';
+
+  /// The Google Cloud "web" client the server checks Google sign-ins
+  /// against (a public identifier, not a secret).
+  static const String googleWebClientId =
+      '241246067706-qb4el2s60fvgnv3qn09i4qltlulk0jn4.apps.googleusercontent.com';
 }

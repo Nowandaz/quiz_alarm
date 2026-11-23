@@ -13,6 +13,7 @@ import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../services/account.dart';
+import '../services/google_native.dart';
 import '../services/guest_mode.dart';
 import '../services/server_config.dart';
 import '../services/system_bridge.dart';
@@ -118,6 +119,26 @@ class _AccountScreenState extends State<AccountScreen> {
       _error = null;
       _notice = null;
     });
+    // First Android's own account picker. If it is not set up for this
+    // build (or the phone has no Google Play services), the browser.
+    if (GoogleNative.supported) {
+      setState(() => _busy = true);
+      final picked = await GoogleNative.signIn();
+      if (picked.outcome == GoogleNativeOutcome.signedIn) {
+        final error = await Account.instance.signInWithGoogleToken(
+          picked.idToken!,
+        );
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _error = error;
+        });
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _busy = false);
+      if (picked.outcome == GoogleNativeOutcome.cancelled) return;
+    }
     final opened = await SystemBridge.openUrl(
       await Account.instance.googleSignInUrl(),
     );

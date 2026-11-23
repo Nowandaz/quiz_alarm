@@ -502,6 +502,33 @@ void main() {
     expect(await account.completeOAuth(link), contains('expired'));
   });
 
+  test('the proof from Android\'s Google picker signs the person in', () async {
+    Account.httpClient = MockClient((request) async {
+      expect(request.url.path, '/auth/v1/token');
+      expect(request.url.queryParameters['grant_type'], 'id_token');
+      expect(jsonDecode(request.body), {
+        'provider': 'google',
+        'id_token': 'proof-from-google',
+      });
+      return http.Response(
+        '{"access_token":"a","refresh_token":"r","expires_in":3600,'
+        '"user":{"id":"user-g","email":"g@example.com"}}',
+        200,
+      );
+    });
+    expect(await account.signInWithGoogleToken('proof-from-google'), isNull);
+    expect(account.isSignedIn, isTrue);
+    expect(account.userId, 'user-g');
+  });
+
+  test('a refused Google proof is explained and signs nobody in', () async {
+    Account.httpClient = MockClient(
+      (_) async => http.Response('{"msg":"Bad ID token"}', 400),
+    );
+    expect(await account.signInWithGoogleToken('bad'), isNotNull);
+    expect(account.isSignedIn, isFalse);
+  });
+
   test('an expired email link is explained', () async {
     expect(
       await account.completeOAuth(
