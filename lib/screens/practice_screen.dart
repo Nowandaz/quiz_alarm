@@ -6,6 +6,9 @@
 /// - Free Revision turns [aiTutor] on: the AI marks typed answers and
 ///   explains where the answer went wrong. If the AI can't be reached the
 ///   stored explanation is used, so a session never gets stuck.
+/// - A long answer question (several marks) gets a bigger text field; the
+///   phone counts the key points in the answer, shows the model answer,
+///   and the user can overrule the mark. The AI is not used for these.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -85,6 +88,15 @@ class _PracticeScreenState extends State<PracticeScreen> {
   /// One line under the verdict: the right spelling when a typo was
   /// forgiven, or the part of the answer that was missing.
   String? _hint;
+
+  /// How a long answer was marked (null for other questions).
+  LongAnswerResult? _long;
+
+  /// The answer just stored, so marking it oneself can change it.
+  Future<int?>? _attempt;
+
+  /// The user overruled the phone's mark on this question.
+  bool _selfMarked = false;
   bool _aiLoading = false;
   String? _aiText;
   String? _aiError;
@@ -191,6 +203,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _question = q;
       _userAnswer = '';
       _hint = null;
+      _long = null;
+      _attempt = null;
+      _selfMarked = false;
       _aiText = null;
       _aiError = null;
       _aiLoading = false;
@@ -209,7 +224,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
     FocusScope.of(context).unfocus();
     _timer.stop();
     final taken = _timer.elapsed;
-    final useAi = widget.aiTutor && _hasKey;
+    // Long answers are marked on the phone only.
+    final useAi = widget.aiTutor && _hasKey && !q.longAnswer;
 
     setState(() {
       _userAnswer = answer.trim();
@@ -217,9 +233,17 @@ class _PracticeScreenState extends State<PracticeScreen> {
     });
 
     // The phone marks first (free, instant, offline).
-    final local = await QuestionService.gradeLocal(q, answer);
-    var verdict = local.correct;
-    String? hint = local.hint;
+    LongAnswerResult? long;
+    var verdict = false;
+    String? hint;
+    if (q.longAnswer) {
+      long = await QuestionService.gradeLong(q, answer);
+      verdict = long.correct;
+    } else {
+      final local = await QuestionService.gradeLocal(q, answer);
+      verdict = local.correct;
+      hint = local.hint;
+    }
     if (useAi &&
         !verdict &&
         q.type == QuestionType.saq &&
@@ -238,6 +262,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
     setState(() {
       _hint = hint;
+      _long = long;
       _verdict = verdict;
       _phase = _Phase.answered;
       _answered++;
@@ -245,20 +270,40 @@ class _PracticeScreenState extends State<PracticeScreen> {
       _results.add(PracticeResult(q, answer.trim(), verdict));
     });
     _session ??= QuestionRepository.startSession(widget.mode, widget.title);
-    _sessionId = await _session;
-    await QuestionRepository.recordAttempt(
-      q.id,
-      correct: verdict,
-      mode: widget.mode,
-      sessionId: _sessionId,
-      userAnswer: answer,
-      timeTaken: taken,
-    );
+    final attempt = _attempt = () async {
+      _sessionId = await _session;
+      return QuestionRepository.recordAttempt(
+        q.id,
+        correct: verdict,
+        mode: widget.mode,
+        sessionId: _sessionId,
+        userAnswer: answer,
+        timeTaken: taken,
+      );
+    }();
+    await attempt;
     QuestionService.changes.value++;
 
     if (useAi && _aiText == null && _aiError == null) {
       await _askTutor();
     }
+  }
+
+  /// "Marked too harshly?" / "Not really?": the user overrules the mark
+  /// of the long answer on screen. The stored answer is changed; no
+  /// second one is added.
+  Future<void> _markMyself() async {
+    final q = _question;
+    if (q == null || _phase != _Phase.answered || _results.isEmpty) return;
+    final verdict = !_verdict;
+    setState(() {
+      _verdict = verdict;
+      _selfMarked = true;
+      _correct += verdict ? 1 : -1;
+      _results.last = PracticeResult(q, _userAnswer, verdict);
+    });
+    await QuestionRepository.setAttemptCorrect(await _attempt, verdict);
+    QuestionService.changes.value++;
   }
 
   Future<void> _askTutor() async {
@@ -377,14 +422,21 @@ class _PracticeScreenState extends State<PracticeScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          q.topic.toUpperCase(),
-                          style: TextStyle(
-                            color: scheme.secondary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                            letterSpacing: 0.6,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                q.topic.toUpperCase(),
+                                style: TextStyle(
+                                  color: scheme.secondary,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
+                            if (q.longAnswer) Pill(q.marksLabel),
+                          ],
                         ),
                         const SizedBox(height: 10),
                         if (q.image.isNotEmpty) ...[
@@ -407,6 +459,20 @@ class _PracticeScreenState extends State<PracticeScreen> {
                 const SizedBox(height: 12),
                 if (q.type == QuestionType.mcq)
                   for (final o in q.options) _optionTile(q, o, scheme)
+                else if (!answered && q.longAnswer)
+                  TextField(
+                    controller: _answerCtrl,
+                    enabled: _phase == _Phase.asking,
+                    minLines: 4,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    textCapitalization: TextCapitalization.sentences,
+                    decoration: const InputDecoration(
+                      hintText:
+                          'Type your answer. One point per line works well.',
+                      alignLabelWithHint: true,
+                    ),
+                  )
                 else if (!answered)
                   TextField(
                     controller: _answerCtrl,
@@ -425,9 +491,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
                 AnimatedSize(
                   duration: const Duration(milliseconds: 250),
                   alignment: Alignment.topCenter,
-                  child: answered
-                      ? _answerSide(q, scheme)
-                      : const SizedBox(width: double.infinity),
+                  child: !answered
+                      ? const SizedBox(width: double.infinity)
+                      : _long != null
+                      ? _longAnswerSide(q, _long!, scheme)
+                      : _answerSide(q, scheme),
                 ),
               ],
             ),
@@ -473,7 +541,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                           style: FilledButton.styleFrom(
                             minimumSize: const Size.fromHeight(52),
                           ),
-                          child: const Text('Check'),
+                          child: Text(q.longAnswer ? 'Submit' : 'Check'),
                         ),
                       ),
                     ],
@@ -737,6 +805,119 @@ class _PracticeScreenState extends State<PracticeScreen> {
               );
             },
           ),
+      ],
+    );
+  }
+
+  /// The back of a long answer card: the marks, which points were found
+  /// and missed, the model answer, why, and "mark it myself".
+  Widget _longAnswerSide(Question q, LongAnswerResult r, ColorScheme scheme) {
+    final theme = Theme.of(context);
+    final skipped = _userAnswer.isEmpty;
+    final color = _verdict ? AppColors.success : scheme.error;
+
+    Widget point(String text, {required bool had}) => Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            had ? Icons.check_rounded : Icons.remove_rounded,
+            size: 18,
+            color: had ? AppColors.success : scheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Icon(
+              _verdict
+                  ? Icons.check_circle
+                  : (skipped ? Icons.lightbulb : Icons.cancel),
+              color: color,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                r.selfMarked
+                    ? 'Compare with the model answer'
+                    : 'You got ${r.score} of ${r.marks} marks',
+                style: TextStyle(
+                  color: color,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (_selfMarked)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              _verdict
+                  ? 'You counted it as correct.'
+                  : 'You counted it as wrong.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        const SizedBox(height: 8),
+        if (!skipped) ...[
+          Text('Your answer:', style: theme.textTheme.bodySmall),
+          Text(_userAnswer),
+          const SizedBox(height: 8),
+        ],
+        if (r.found.isNotEmpty) ...[
+          Text('Points found', style: theme.textTheme.labelLarge),
+          for (final p in r.found) point(p, had: true),
+          const SizedBox(height: 8),
+        ],
+        if (r.missed.isNotEmpty) ...[
+          Text(
+            // "Any 4 of these 6": the rest were not needed.
+            r.score >= r.marks ? 'Would also count' : 'Points missed',
+            style: theme.textTheme.labelLarge,
+          ),
+          for (final p in r.missed) point(p, had: false),
+          const SizedBox(height: 8),
+        ],
+        const SizedBox(height: 4),
+        _infoCard(
+          scheme,
+          icon: Icons.fact_check_outlined,
+          title: 'Model answer',
+          child: Text(q.correctAnswer, style: const TextStyle(height: 1.4)),
+        ),
+        if (q.explanation.trim().isNotEmpty)
+          _infoCard(
+            scheme,
+            icon: Icons.menu_book,
+            title: 'Explanation',
+            child: Text(q.explanation, style: const TextStyle(height: 1.4)),
+          ),
+        // Matching words is not perfect: the user has the last say.
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: _markMyself,
+            style: TextButton.styleFrom(
+              foregroundColor: scheme.onSurfaceVariant,
+            ),
+            child: Text(
+              _verdict
+                  ? 'Not really? Count it as wrong'
+                  : 'Marked too harshly? Count it as correct',
+            ),
+          ),
+        ),
       ],
     );
   }

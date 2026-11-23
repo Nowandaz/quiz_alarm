@@ -225,6 +225,26 @@ class AnswerGrader {
     );
   }
 
+  /// For each of [points] (a point = the wordings that count for it):
+  /// whether [user] says it somewhere, with the same tolerant matching as
+  /// [grade] (typos, word order inside the text, "not X" is not X). Used
+  /// for long answers (see long_answer_grader.dart).
+  static List<bool> pointsIn(String user, List<List<String>> points) {
+    final concepts = [
+      for (final wordings in points)
+        AnswerConcept._([for (final w in wordings) ?_Synonym.from(w)]),
+    ];
+    final reply = _tokens(user);
+    if (reply.all.isEmpty) return List.filled(points.length, false);
+    final ownTerms = {
+      for (final c in concepts)
+        for (final s in c.synonyms) s.key,
+    };
+    return [
+      for (final c in concepts) _hits(c, user, reply, ownTerms).isNotEmpty,
+    ];
+  }
+
   // ------------------------------------------------------------- concepts
 
   /// Turns the stored answer and its alternatives into the ways the

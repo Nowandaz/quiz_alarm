@@ -241,6 +241,10 @@ class _ResultCard extends StatelessWidget {
               q.questionText,
               style: const TextStyle(fontWeight: FontWeight.w700, height: 1.3),
             ),
+            if (q.longAnswer) ...[
+              const SizedBox(height: 6),
+              Pill(q.marksLabel),
+            ],
             if (q.image.isNotEmpty) ...[
               const SizedBox(height: 10),
               QuestionImage(q.image, maxHeight: 160),
@@ -260,7 +264,7 @@ class _ResultCard extends StatelessWidget {
                 Icons.close_rounded,
               ),
               line(
-                'CORRECT',
+                q.longAnswer ? 'MODEL ANSWER' : 'CORRECT',
                 q.correctAnswer,
                 AppColors.success,
                 Icons.check_rounded,

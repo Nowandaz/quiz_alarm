@@ -130,6 +130,17 @@ class Question {
   /// 'server' (downloaded bank), 'ai' or 'user'.
   final String source;
 
+  /// What the question is worth in an exam. 1 for ordinary questions.
+  final int marks;
+
+  /// True for a question that wants several things ("List 4 aims of...").
+  /// Asked in practice only, never while an alarm rings.
+  final bool longAnswer;
+
+  /// For a long answer: the points that earn a mark, each with the
+  /// wordings that count for it ([["sedation", "anxiolysis"], ["amnesia"]]).
+  final List<List<String>> keyPoints;
+
   const Question({
     required this.id,
     this.topicId = '',
@@ -142,7 +153,36 @@ class Question {
     this.image = '',
     this.explanation = '',
     this.source = 'seed',
+    this.marks = 1,
+    this.longAnswer = false,
+    this.keyPoints = const [],
   });
+
+  /// "4 marks" (or "1 mark").
+  String get marksLabel => '$marks mark${marks == 1 ? '' : 's'}';
+
+  /// The kind of question in words, for lists.
+  String get typeLabel => type == QuestionType.mcq
+      ? 'Multiple choice'
+      : longAnswer
+      ? 'Long answer'
+      : 'Short answer';
+
+  /// Key points as stored or sent by the server, made safe: a list of
+  /// points, each a list of non-empty wordings. A point written as plain
+  /// text is one wording; anything unreadable is left out.
+  static List<List<String>> cleanKeyPoints(Object? raw) {
+    if (raw is! List) return const [];
+    final points = <List<String>>[];
+    for (final point in raw) {
+      final wordings = [
+        for (final w in point is List ? point : [point])
+          if (w != null && '$w'.trim().isNotEmpty) '$w'.trim(),
+      ];
+      if (wordings.isNotEmpty) points.add(wordings);
+    }
+    return points;
+  }
 
   /// The same question with its options in a new random order, so the
   /// right answer is not always in the same place.
@@ -161,6 +201,9 @@ class Question {
     image: image,
     explanation: explanation ?? this.explanation,
     source: source,
+    marks: marks,
+    longAnswer: longAnswer,
+    keyPoints: keyPoints,
   );
 
   /// Reads a row of the `questions` table joined with its topic name.
@@ -173,6 +216,15 @@ class Question {
       }
     }
 
+    List<List<String>> points(Object? raw) {
+      try {
+        return cleanKeyPoints(jsonDecode(raw as String));
+      } catch (_) {
+        return const [];
+      }
+    }
+
+    final marks = (row['marks'] as int?) ?? 1;
     return Question(
       id: row['id'] as String,
       topicId: row['topic_id'] as String,
@@ -185,6 +237,9 @@ class Question {
       image: (row['image'] ?? '') as String,
       explanation: (row['explanation'] ?? '') as String,
       source: (row['source'] ?? 'seed') as String,
+      marks: marks < 1 ? 1 : marks,
+      longAnswer: row['long_answer'] == 1,
+      keyPoints: points(row['key_points']),
     );
   }
 }

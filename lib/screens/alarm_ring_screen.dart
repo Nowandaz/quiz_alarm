@@ -192,6 +192,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
       q = await QuestionService.nextQuestion(
         widget.alarm.topics,
         exclude: _shown,
+        // Nobody half asleep can type four points (also in a preview).
+        longAnswers: false,
       );
     } catch (e) {
       debugPrint('Could not load a question: $e');
@@ -232,6 +234,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
           result == 'snooze' ? 'snoozed' : 'dismissed',
         );
       } catch (_) {}
+      // Half way through a topic: more of the bank for the next ring.
+      unawaited(provider.refillQuestionBank());
       QuestionService.changes.value++;
     }
     if (!mounted) return;

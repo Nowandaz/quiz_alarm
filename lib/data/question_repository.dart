@@ -28,7 +28,13 @@ class QuestionRepository {
   static Future<void>? _ready;
 
   /// Opens the database and imports bundled / legacy data once.
-  static Future<void> ensureReady() => _ready ??= _init();
+  static Future<void> ensureReady() => _ready ??= _init().then((_) async {
+    try {
+      await revealBaseline();
+    } catch (e) {
+      debugPrint('Could not set the topics out: $e');
+    }
+  });
 
   @visibleForTesting
   static void resetForTest() => _ready = null;
@@ -488,16 +494,112 @@ class QuestionRepository {
   /// offline and after a plan has run out.
   static String _openSql({String q = 'q', String t = 't'}) {
     final e = Entitlements.instance;
-    if (e.isPaid) return '1 = 1';
+    // Only questions brought out of the bank so far (see [revealBaseline]).
+    if (e.isPaid) return '$q.revealed = 1';
     final firstFew =
         '$q.id IN (SELECT o.id FROM questions o WHERE o.topic_id = $q.topic_id '
+        'AND o.revealed = 1 '
         'ORDER BY o.created_at, o.id LIMIT $freeQuestionCap)';
     if (e.isGuest) {
       return "($t.is_custom = 0 AND $t.access = '${TopicAccess.guest}' "
           'AND $firstFew)';
     }
-    return '($t.is_custom = 1 OR ($t.access IN '
-        "('${TopicAccess.guest}', '${TopicAccess.free}') AND $firstFew))";
+    return '($q.revealed = 1 AND ($t.is_custom = 1 OR ($t.access IN '
+        "('${TopicAccess.guest}', '${TopicAccess.free}') AND $firstFew)))";
+  }
+
+  // ------------------------------------------- how much of the bank is out
+
+  /// How many bank questions a topic starts with, and how many more come
+  /// out each time more are asked for. The whole bank is on the phone
+  /// (so this works offline); the rest of a topic waits until the user
+  /// loads more, or an alarm on the topic is half way through what is out.
+  static const int topicBatch = 20;
+
+  static const String _bank = "source IN ('seed', 'server')";
+
+  /// Sets every topic out: questions already answered are out, and each
+  /// topic has at least [topicBatch] bank questions out (or all it has).
+  /// Called after the bank or the history changed. True if anything
+  /// came out.
+  static Future<bool> revealBaseline() async {
+    final db = await _db;
+    var changed =
+        await db.rawUpdate(
+          'UPDATE questions SET revealed = 1 WHERE revealed = 0 AND id IN '
+          '(SELECT question_id FROM attempts WHERE question_id IS NOT NULL)',
+        ) >
+        0;
+    final rows = await db.rawQuery(
+      'SELECT topic_id, SUM(revealed) AS shown FROM questions '
+      'WHERE $_bank GROUP BY topic_id '
+      'HAVING SUM(revealed) < $topicBatch AND SUM(revealed) < COUNT(*)',
+    );
+    for (final r in rows) {
+      final shown = (r['shown'] as int?) ?? 0;
+      changed |=
+          await revealMore(r['topic_id'] as String, topicBatch - shown) > 0;
+    }
+    return changed;
+  }
+
+  /// Brings up to [count] more bank questions of a topic out. Returns how
+  /// many came out (0 when the topic has no more).
+  static Future<int> revealMore(
+    String topicId, [
+    int count = topicBatch,
+  ]) async {
+    if (count <= 0) return 0;
+    return (await _db).rawUpdate(
+      'UPDATE questions SET revealed = 1 WHERE id IN '
+      '(SELECT id FROM questions WHERE topic_id = ? AND revealed = 0 '
+      'AND $_bank ORDER BY created_at, id LIMIT ?)',
+      [topicId, count],
+    );
+  }
+
+  /// How many bank questions of a topic have not come out yet.
+  static Future<int> waitingCount(String topicId) async =>
+      Sqflite.firstIntValue(
+        await (await _db).rawQuery(
+          'SELECT COUNT(*) FROM questions WHERE topic_id = ? AND revealed = 0 '
+          'AND $_bank',
+          [topicId],
+        ),
+      ) ??
+      0;
+
+  /// For the topics alarms ask about ([selectors], as on an alarm): a
+  /// topic where at least half of the questions an alarm can ask have
+  /// been answered gets [topicBatch] more from the bank, so alarms do not
+  /// run out of new questions. Only on a paid plan (the others see a
+  /// fixed first few). Returns how many questions came out.
+  static Future<int> revealForAlarms(Iterable<String> selectors) async {
+    if (!Entitlements.instance.isPaid) return 0;
+    await ensureReady();
+    final ids = await resolveTopicIds(selectors);
+    if (ids.isEmpty) return 0;
+    final db = await _db;
+    final marks = List.filled(ids.length, '?').join(',');
+    final rows = await db.rawQuery(
+      'SELECT q.topic_id AS topic_id, '
+      'SUM(CASE WHEN q.revealed = 1 AND q.long_answer = 0 THEN 1 ELSE 0 END) '
+      'AS shown, '
+      'SUM(CASE WHEN q.revealed = 1 AND q.long_answer = 0 AND EXISTS '
+      '(SELECT 1 FROM attempts a WHERE a.question_id = q.id) THEN 1 ELSE 0 END) '
+      'AS done, '
+      'SUM(CASE WHEN q.revealed = 0 THEN 1 ELSE 0 END) AS waiting '
+      'FROM questions q WHERE q.topic_id IN ($marks) GROUP BY q.topic_id',
+      ids,
+    );
+    var out = 0;
+    for (final r in rows) {
+      final shown = (r['shown'] as int?) ?? 0;
+      final done = (r['done'] as int?) ?? 0;
+      if (((r['waiting'] as int?) ?? 0) == 0 || done * 2 < shown) continue;
+      out += await revealMore(r['topic_id'] as String);
+    }
+    return out;
   }
 
   // -------------------------------------------------------- archived units
@@ -734,6 +836,9 @@ class QuestionRepository {
       'explanation': q.explanation.trim(),
       'image': q.image,
       'source': q.source,
+      'marks': q.marks,
+      'long_answer': q.longAnswer ? 1 : 0,
+      'key_points': jsonEncode(q.keyPoints),
       'created_at': DateTime.now().millisecondsSinceEpoch,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
     final stored = await db.query(
@@ -768,7 +873,9 @@ class QuestionRepository {
     await db.delete('questions', where: 'id = ?', whereArgs: [questionId]);
   }
 
-  static Future<void> recordAttempt(
+  /// Stores one answer. Returns the attempt's id (for
+  /// [setAttemptCorrect]), or null if it could not be saved.
+  static Future<int?> recordAttempt(
     String questionId, {
     required bool correct,
     required String mode,
@@ -777,7 +884,7 @@ class QuestionRepository {
     Duration? timeTaken,
   }) async {
     try {
-      await (await _db).insert('attempts', {
+      final id = await (await _db).insert('attempts', {
         'question_id': questionId,
         'mode': mode,
         'correct': correct ? 1 : 0,
@@ -787,8 +894,27 @@ class QuestionRepository {
         'duration_ms': timeTaken?.inMilliseconds,
       });
       onLocalChange?.call();
+      return id;
     } catch (e) {
       debugPrint('Could not record the answer: $e');
+      return null;
+    }
+  }
+
+  /// Changes the verdict of an answer already stored (the user marked a
+  /// long answer themselves). No second attempt is added.
+  static Future<void> setAttemptCorrect(int? attemptId, bool correct) async {
+    if (attemptId == null) return;
+    try {
+      await (await _db).update(
+        'attempts',
+        {'correct': correct ? 1 : 0, 'synced': 0},
+        where: 'id = ?',
+        whereArgs: [attemptId],
+      );
+      onLocalChange?.call();
+    } catch (e) {
+      debugPrint('Could not change the answer: $e');
     }
   }
 
@@ -840,12 +966,20 @@ class QuestionRepository {
   /// Only open questions are picked (see [_openSql]). The one exception:
   /// an alarm ([repeat]) on a phone with no open question at all still
   /// gets one, because a ringing alarm must always have something to ask.
+  ///
+  /// Long answer questions ([Question.longAnswer]) are for practice only.
+  /// With [longAnswers] false (the default for an alarm, [repeat]) they
+  /// are never picked: a selection made only of them falls back to the
+  /// ordinary questions of every topic, like a selection with nothing in
+  /// it. Null if the phone holds nothing but long answer questions.
   static Future<Question?> pickNext(
     List<String> topicIds, {
     Set<String> exclude = const {},
     bool repeat = true,
+    bool? longAnswers,
     Random? rng,
   }) async {
+    final ordinaryOnly = !(longAnswers ?? !repeat);
     await ensureReady();
     final db = await _db;
     Future<List<Map<String, Object?>>> load(
@@ -860,6 +994,7 @@ class QuestionRepository {
         'LEFT JOIN attempts la ON la.id = '
         '(SELECT MAX(a.id) FROM attempts a WHERE a.question_id = q.id) '
         'WHERE ${openOnly ? _openSql() : '1 = 1'} '
+        '${ordinaryOnly ? 'AND q.long_answer = 0 ' : ''}'
         '${ids.isEmpty ? '' : 'AND q.topic_id IN ($marks)'}',
         ids,
       );

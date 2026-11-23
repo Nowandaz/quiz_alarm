@@ -59,7 +59,10 @@ class SyncService {
   static const String _statusPref = 'sync_status';
   static const String _backupPref = 'sync_backup_hash';
   static const String _bankLevelKey = 'bank_level';
-  static const String _bankFullKey = 'bank_full_at';
+  static const String _bankFullKey = AppDatabase.bankFullKey;
+
+  /// Sent as the `X-App-Features` header on every request to the server.
+  static const String appFeatures = 'long-answers';
   static const String _ownerKey = 'data_owner';
   static const String _deletedKey = QuestionRepository.deletedOwnQuestionsKey;
 
@@ -127,8 +130,11 @@ class SyncService {
       if (signedIn && await _adoptOwner()) QuestionService.changes.value++;
       var bankOk = false;
       try {
-        if (await _syncBank(full: fullBank)) QuestionService.changes.value++;
+        final bankChanged = await _syncBank(full: fullBank);
         bankOk = true;
+        // New questions wait in the bank; each topic keeps its first few out.
+        final out = await QuestionRepository.revealBaseline();
+        if (bankChanged || out) QuestionService.changes.value++;
       } catch (e) {
         problems.add('question bank: ${_short(e)}');
       }
@@ -136,7 +142,10 @@ class SyncService {
         try {
           // History is only brought back once the bank is in place:
           // answers can only be kept for questions the phone has.
-          if (bankOk && await _restoreOnce()) QuestionService.changes.value++;
+          if (bankOk && await _restoreOnce()) {
+            await QuestionRepository.revealBaseline();
+            QuestionService.changes.value++;
+          }
           await _upload();
           // Questions flagged for review (never throws).
           await FlagStore.upload();
@@ -191,6 +200,9 @@ class SyncService {
       'apikey': ServerConfig.supabaseKey,
       'Authorization': 'Bearer ${token ?? ServerConfig.supabaseKey}',
       'Content-Type': 'application/json',
+      // What this version of the app can show. The server only sends
+      // long answer questions to apps that say they know them.
+      'X-App-Features': appFeatures,
       'Prefer': ?prefer,
     };
     final request = http.Request(method, uri)..headers.addAll(headers);
@@ -420,14 +432,24 @@ class SyncService {
     const columns =
         'id,topic_id,type,text,options,answer,alt_answers,explanation,'
         'image_path,status,deleted_at,updated_at';
-    final questions = full
-        ? await _allById('questions', {'select': columns}, token: token)
-        : await _all(
+    Future<List<Map<String, dynamic>>> fetch(String columns) => full
+        ? _allById('questions', {'select': columns}, token: token)
+        : _all(
             'questions',
             {'select': columns, 'updated_at': 'gte.$since'},
             order: 'updated_at.asc,id.asc',
             token: token,
           );
+    List<Map<String, dynamic>> questions;
+    try {
+      questions = await fetch('$columns,marks,long_answer,key_points');
+    } on _SyncError catch (e) {
+      // A server from before marks existed does not know the columns
+      // (400): the bank then arrives as before, without long answers.
+      if (e.status != 400) rethrow;
+      debugPrint('This server has no marks: $e');
+      questions = await fetch(columns);
+    }
     // Questions that were unpublished or deleted: a phone is not allowed to
     // read those rows any more, so the server lists their ids separately.
     var withdrawn = const <String>[];
@@ -610,13 +632,18 @@ class SyncService {
         );
         await txn.rawInsert(
           'INSERT INTO questions(id, topic_id, type, text, text_key, options, '
-          'answer, alt_answers, explanation, image, source, created_at) '
-          "VALUES(?,?,?,?,?,?,?,?,?,?,'server',?) ON CONFLICT(id) DO UPDATE SET "
+          'answer, alt_answers, explanation, image, source, created_at, '
+          'marks, long_answer, key_points, revealed) '
+          // New ones wait in the bank until the topic brings them out.
+          "VALUES(?,?,?,?,?,?,?,?,?,?,'server',?,?,?,?,0) "
+          'ON CONFLICT(id) DO UPDATE SET '
           'topic_id = excluded.topic_id, type = excluded.type, '
           'text = excluded.text, text_key = excluded.text_key, '
           'options = excluded.options, answer = excluded.answer, '
           'alt_answers = excluded.alt_answers, image = excluded.image, '
-          "explanation = excluded.explanation, source = 'server'",
+          "explanation = excluded.explanation, source = 'server', "
+          'marks = excluded.marks, long_answer = excluded.long_answer, '
+          'key_points = excluded.key_points',
           [
             id,
             q['topic_id'],
@@ -629,6 +656,10 @@ class SyncService {
             '${q['explanation'] ?? ''}',
             image,
             _ms(q['updated_at']),
+            // Missing on an ordinary question (or an older server).
+            max(1, (q['marks'] as num?)?.toInt() ?? 1),
+            q['long_answer'] == true ? 1 : 0,
+            jsonEncode(Question.cleanKeyPoints(q['key_points'])),
           ],
         );
         changed = true;
