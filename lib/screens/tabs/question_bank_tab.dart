@@ -317,8 +317,12 @@ class _UnitCard extends StatelessWidget {
                       Text(unit.name, style: theme.textTheme.titleLarge),
                       const SizedBox(height: 2),
                       Text(
-                        '${plural(topics.length, 'topic')} \u00b7 '
-                        '${plural(total, 'question')}',
+                        // A unit whose topics are all locked says so,
+                        // instead of "0 questions".
+                        topics.isNotEmpty && !topics.any(bank.isOpen)
+                            ? '${plural(topics.length, 'topic')} \u00b7 Locked'
+                            : '${plural(topics.length, 'topic')} \u00b7 '
+                                  '${plural(total, 'question')}',
                         style: theme.textTheme.bodySmall,
                       ),
                     ],

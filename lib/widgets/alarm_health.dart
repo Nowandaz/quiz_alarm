@@ -62,7 +62,7 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
   );
   await check(
     () => Permission.ignoreBatteryOptimizations.isGranted,
-    'Battery saving applies to BrainWake',
+    'Battery saving applies to Brain O\' Clock',
     'The phone may delay or skip alarms to save power.',
     () => ask(Permission.ignoreBatteryOptimizations),
   );
@@ -82,10 +82,10 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
         await SystemBridge.needsAutostart()) {
       problems.add(
         AlarmProblem(
-          'Allow BrainWake to start by itself',
+          'Allow Brain O\' Clock to start by itself',
           'On this phone, alarms and the 5-minute heads-up can be lost '
               'after a restart unless "Autostart" is switched on for '
-              'BrainWake.',
+              'Brain O\' Clock.',
           () async {
             await SystemBridge.openAutostartSettings();
             await prefs.setBool(autostartSeenPref, true);

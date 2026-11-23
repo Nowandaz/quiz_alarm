@@ -180,7 +180,8 @@ class MainActivity : FlutterActivity() {
                                 Notification.Builder(applicationContext)
                             }
                             builder
-                                .setSmallIcon(applicationInfo.icon)
+                                .setSmallIcon(R.drawable.ic_notification)
+                                .setColor(getColor(R.color.notification_tint))
                                 .setContentTitle(title)
                                 .setContentText(body)
                                 .setStyle(Notification.BigTextStyle().bigText(body))
@@ -218,7 +219,7 @@ class MainActivity : FlutterActivity() {
                                     .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin())
                                     .putExtra(
                                         DevicePolicyManager.EXTRA_ADD_EXPLANATION,
-                                        "Stops BrainWake being uninstalled while an alarm is ringing."
+                                        "Stops Brain O' Clock being uninstalled while an alarm is ringing."
                                     )
                             )
                             result.success(true)

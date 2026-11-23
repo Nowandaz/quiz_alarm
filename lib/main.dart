@@ -97,7 +97,7 @@ class QuizAlarmApp extends StatelessWidget {
     // colours). Where the phone has none, the app's own accent is used.
     return DynamicColorBuilder(
       builder: (lightDynamic, darkDynamic) => MaterialApp(
-        title: 'BrainWake Alarm',
+        title: 'Brain O\' Clock',
         debugShowCheckedModeBanner: false,
         themeMode: settings.themeMode,
         theme: AppTheme.light(lightDynamic?.primary),

@@ -1,5 +1,5 @@
 name: quiz_alarm
-description: "BrainWake: an alarm you can only dismiss by answering revision questions."
+description: "Brain O' Clock: an alarm you can only dismiss by answering revision questions."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -82,6 +82,7 @@ flutter:
     - assets/sounds/ringtones/
     - assets/question_banks/
     - assets/question_images/
+    - assets/brand/
  
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

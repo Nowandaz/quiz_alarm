@@ -508,7 +508,10 @@ class _EmptyAlarms extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Welcome to BrainWake', style: theme.textTheme.titleLarge),
+            Text(
+              'Welcome to Brain O\' Clock',
+              style: theme.textTheme.titleLarge,
+            ),
             const SizedBox(height: 4),
             Text(
               'An alarm that only stops when you answer revision questions.',

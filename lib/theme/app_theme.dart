@@ -13,8 +13,8 @@ import 'package:material_ui/material_ui.dart';
 
 class AppColors {
   /// Accent used when the phone does not offer a theme colour.
-  static const Color accentDark = Color(0xFFA99BFF);
-  static const Color accentLight = Color(0xFF5B45E0);
+  static const Color accentDark = Color(0xFF8AB4F8);
+  static const Color accentLight = Color(0xFF1F4FD1);
 
   /// Meaning-only colours: correct / wrong.
   static const Color success = Color(0xFF30D158);

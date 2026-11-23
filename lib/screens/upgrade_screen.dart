@@ -526,7 +526,7 @@ class _UpgradeScreenState extends State<UpgradeScreen>
           ),
           const SizedBox(height: 12),
           Text(
-            'BrainWake plans',
+            'Brain O\' Clock plans',
             style: theme.textTheme.headlineSmall?.copyWith(
               fontFamily: AppTheme.display,
               fontWeight: FontWeight.w700,
@@ -763,7 +763,7 @@ class _UpgradeScreenState extends State<UpgradeScreen>
             : _method == 'mpesa'
             ? 'A payment request comes to your phone. You approve it with '
                   'your M-Pesa PIN.'
-            : 'Your card details go straight to Paystack. BrainWake never '
+            : 'Your card details go straight to Paystack. Brain O\' Clock never '
                   'sees them.',
         textAlign: TextAlign.center,
         style: theme.textTheme.bodySmall?.copyWith(color: muted),

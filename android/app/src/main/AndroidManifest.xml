@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
     <application
-        android:label="BrainWake"
+        android:label="Brain O\' Clock"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!-- Not marked showWhenLocked here on purpose: the app must stay

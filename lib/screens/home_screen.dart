@@ -51,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ReportsTab(),
   ];
   static const List<String> _titles = [
-    'BrainWake',
+    'Brain O\' Clock',
     'Question banks',
     'Reports',
   ];
@@ -248,7 +248,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
-          title: const Text('Welcome to BrainWake'),
+          title: const Text('Welcome to Brain O\' Clock'),
           content: const Text(
             'The alarm you can only switch off by answering revision '
             'questions.\n\nWant a one-minute tour of where everything is?',
@@ -397,7 +397,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             await _explain(
               'Show the quiz when an alarm rings',
               'So an alarm can wake the screen and open the questions by '
-                  'itself, allow "Full screen notifications" for BrainWake '
+                  'itself, allow "Full screen notifications" for Brain O\' Clock '
                   'on the next page.',
             )) {
           await SystemBridge.openFullScreenIntentSettings();
@@ -410,7 +410,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (mounted &&
             await _explain(
               'Open over other apps',
-              'If an alarm rings while you are using another app, BrainWake '
+              'If an alarm rings while you are using another app, Brain O\' Clock '
                   'can come to the front with the questions. For that, allow '
                   '"Display over other apps" on the next page.',
             )) {

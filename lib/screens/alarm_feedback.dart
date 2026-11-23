@@ -166,7 +166,7 @@ Future<void> showAlarmFeedback(
                         Text(
                           '${missed!.label.isEmpty ? 'Your alarm' : missed.label} '
                           'was set for ${formatClock(missed.scheduled, use24Hour: use24)}. '
-                          'Help us improve BrainWake.',
+                          'Help us improve Brain O\' Clock.',
                           style: muted,
                         ),
                         const SizedBox(height: 18),
