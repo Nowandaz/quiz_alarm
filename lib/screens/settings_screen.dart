@@ -24,6 +24,7 @@ import '../services/sync_service.dart';
 import '../services/system_bridge.dart';
 import '../services/theme_provider.dart';
 import 'account_screen.dart';
+import 'messages_screen.dart';
 import 'alarm_feedback.dart';
 import 'upgrade_screen.dart';
 
@@ -492,6 +493,16 @@ class _SettingsScreenState extends State<SettingsScreen>
           await themeProvider.setHeadsUp(v);
           await alarms.refreshHeadsUps();
         },
+      ),
+      ListTile(
+        leading: const Icon(Icons.campaign_outlined),
+        title: const Text('Messages'),
+        subtitle: const Text('News from the team: new topics and updates.'),
+        trailing: const Icon(Icons.chevron_right_rounded),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const MessagesScreen()),
+        ),
       ),
       ListTile(
         leading: const Icon(Icons.explore_rounded),
