@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/alarm_provider.dart';
 import '../services/billing.dart';
+import '../services/announcements.dart';
 import '../services/entitlements.dart';
 import '../services/update_check.dart';
 import '../services/guest_mode.dart';
@@ -23,6 +24,7 @@ import 'account_screen.dart';
 import 'alarm_feedback.dart';
 import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
+import 'messages_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/alarm_tab.dart';
 import 'tabs/question_bank_tab.dart';
@@ -168,6 +170,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Entitlements.instance.refresh();
     // Coming back to the app is also a moment to look for an update.
     UpdateCheck.run();
+    Announcements.run();
     if (!Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
       SystemBridge.setAlarmScreen(false);
     }
@@ -508,6 +511,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
               ),
               const UpdateBanner(),
+              const MessageBanner(),
               ListenableBuilder(
                 listenable: Entitlements.instance,
                 builder: (context, _) => Entitlements.instance.needsCheck

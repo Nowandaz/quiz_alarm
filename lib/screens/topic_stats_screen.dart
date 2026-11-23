@@ -23,8 +23,13 @@ class TopicStatsScreen extends StatefulWidget {
 class _TopicStatsScreenState extends State<TopicStatsScreen> {
   final _search = TextEditingController();
 
-  /// Topic id -> the name of its unit, so a search finds "Pharmacology".
+  /// Topic id -> where it is, shown under its name: "Pharmacology", or
+  /// "Pathology · Blood film" for a topic in a section.
   Map<String, String> _unitOf = const {};
+
+  /// Topic id -> the names a search also looks in: its unit, section and
+  /// subunit.
+  Map<String, String> _findBy = const {};
 
   @override
   void initState() {
@@ -43,11 +48,33 @@ class _TopicStatsScreenState extends State<TopicStatsScreen> {
       final units = {
         for (final u in await QuestionRepository.getUnits()) u.id: u.name,
       };
-      final map = {
-        for (final t in await QuestionRepository.getTopics())
-          t.id: units[t.unitId] ?? '',
+      final sections = {
+        for (final x in await QuestionRepository.getSections()) x.id: x,
       };
-      if (mounted) setState(() => _unitOf = map);
+      final place = <String, String>{};
+      final findBy = <String, String>{};
+      for (final t in await QuestionRepository.getTopics()) {
+        final unit = units[t.unitId] ?? '';
+        final section = sections[t.sectionId];
+        final subunit = sections[section?.parentId];
+        place[t.id] = [
+          if (unit.isNotEmpty) unit,
+          if (section != null &&
+              section.name.toLowerCase() != t.name.toLowerCase())
+            section.name,
+        ].join(' \u00b7 ');
+        findBy[t.id] = [
+          unit,
+          ?section?.name,
+          ?subunit?.name,
+        ].join('\n').toLowerCase();
+      }
+      if (mounted) {
+        setState(() {
+          _unitOf = place;
+          _findBy = findBy;
+        });
+      }
     } catch (e) {
       debugPrint('Unit names could not be loaded: $e');
     }
@@ -76,7 +103,7 @@ class _TopicStatsScreenState extends State<TopicStatsScreen> {
       for (final t in widget.topics)
         if (query.isEmpty ||
             t.topic.toLowerCase().contains(query) ||
-            (_unitOf[t.id] ?? '').toLowerCase().contains(query))
+            (_findBy[t.id] ?? '').contains(query))
           t,
     ];
     final weakest = widget.topics.isEmpty ? null : widget.topics.first;

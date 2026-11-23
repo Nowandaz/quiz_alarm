@@ -37,6 +37,9 @@ class FakeServer {
   /// A question id the server refuses to store (as a broken row would be).
   String? refuse;
 
+  /// Set to make reading `sections` fail with this status.
+  int? failSections;
+
   void unit(String id, {bool premium = false, String? deletedAt}) =>
       tables['units']!.add({
         'id': id,
@@ -57,6 +60,30 @@ class FakeServer {
         'deleted_at': null,
         'access': ?access,
       });
+
+  /// A subunit or section. The table only exists once one was added: a
+  /// server without it answers 404, as one from before sections does.
+  Map<String, dynamic> section(
+    String id,
+    String unit, {
+    String? parent,
+    String kind = 'section',
+    int order = 0,
+  }) {
+    final row = {
+      'id': id,
+      'unit_id': unit,
+      'parent_id': parent,
+      'kind': kind,
+      'name': 'Section $id',
+      'description': '',
+      'sort_order': order,
+      'deleted_at': null,
+      'updated_at': '2026-01-01T00:00:00Z',
+    };
+    (tables['sections'] ??= []).add(row);
+    return row;
+  }
 
   /// Set to make the server hand out questions as the real one does: only
   /// those of topics open to the caller ('guest' without a sign-in,
@@ -122,6 +149,11 @@ class FakeServer {
         200,
       );
     }
+    if (table == 'sections' && failSections != null) {
+      return http.Response('{}', failSections!);
+    }
+    // A table the server does not have (e.g. `sections` on an old one).
+    if (!tables.containsKey(table)) return http.Response('{}', 404);
     final rows = tables[table]!;
     final q = request.url.queryParameters;
 
@@ -394,6 +426,100 @@ void main() {
       Account.instance.signInForTest();
       await SyncService.run();
       expect((await localQuestionIds('server')).toSet(), {'g1', 'f1'});
+    });
+  });
+
+  group('sections', () {
+    Future<Map<String, String?>> filed() async => {
+      for (final t in await QuestionRepository.getTopics()) t.id: t.sectionId,
+    };
+
+    test('subunits, sections and where each topic is filed come down; a '
+        'later run brings changes and deletions', () async {
+      await start();
+      server.unit('u1');
+      server.section('sub', 'u1', kind: 'subunit');
+      server.section('sec-a', 'u1', parent: 'sub', order: 1);
+      final b = server.section('sec-b', 'u1', order: 2);
+      server.topic('t1', 'u1');
+      server.topic('t2', 'u1');
+      server.topic('t3', 'u1');
+      server.tables['topics']![0]['section_id'] = 'sec-a';
+      server.tables['topics']![1]['section_id'] = 'sec-b';
+      server.tables['topics']![2]['section_id'] = null;
+      server.question('a', 't1');
+      await SyncService.run();
+
+      final sections = await QuestionRepository.getSections();
+      expect(
+        [for (final x in sections) '${x.kind} ${x.id} <${x.parentId}'],
+        ['subunit sub <null', 'section sec-a <sub', 'section sec-b <null'],
+      );
+      expect(sections.first.name, 'Section sub');
+      expect(await filed(), {'t1': 'sec-a', 't2': 'sec-b', 't3': null});
+      // An alarm set on the subunit asks its topics.
+      expect(await QuestionRepository.resolveTopicIds(['sub']), ['t1']);
+
+      // Later: a section is renamed, one is deleted, a topic moves.
+      server.tables['sections']![1]['name'] = 'Renamed';
+      b['deleted_at'] = DateTime.now().toUtc().toIso8601String();
+      server.tables['topics']![2]['section_id'] = 'sec-a';
+      await SyncService.run();
+      final after = await QuestionRepository.getSections();
+      expect(after.map((x) => x.id), ['sub', 'sec-a']);
+      expect(after.last.name, 'Renamed');
+      // The deleted section's topic stays, filed as the server says.
+      expect(await filed(), {'t1': 'sec-a', 't2': 'sec-b', 't3': 'sec-a'});
+      expect((await QuestionRepository.resolveTopicIds(['sub'])).toSet(), {
+        't1',
+        't3',
+      });
+    });
+
+    test('a server from before sections still syncs, and the bundled '
+        'sections stay', () async {
+      await start();
+      await QuestionRepository.ensureReady();
+      final bundled = (await filed())['pharm-cns'];
+      expect(bundled, isNotNull);
+      server.unit('pharmacology');
+      server.topic('pharm-cns', 'pharmacology');
+      server.question('q1', 'pharm-cns');
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Up to date'));
+      expect(await localQuestionIds('server'), ['q1']);
+      expect((await filed())['pharm-cns'], bundled);
+      expect(
+        (await QuestionRepository.getSections()).map((x) => x.id),
+        contains(bundled),
+      );
+    });
+
+    test('a server with sections replaces the bundled ones', () async {
+      await start();
+      await QuestionRepository.ensureReady();
+      server.unit('pharmacology');
+      server.section('s1', 'pharmacology');
+      server.topic('pharm-cns', 'pharmacology');
+      server.tables['topics']![0]['section_id'] = 's1';
+      server.question('q1', 'pharm-cns');
+      await SyncService.run();
+      expect((await QuestionRepository.getSections()).map((x) => x.id), ['s1']);
+      expect(await filed(), {'pharm-cns': 's1'});
+    });
+
+    test('any other failure reading sections stops the sync', () async {
+      await start();
+      server.unit('u1');
+      server.topic('t1', 'u1');
+      server.question('a', 't1');
+      server.failSections = 500;
+      await SyncService.run();
+      expect(SyncService.status.value, startsWith('Could not'));
+      expect(
+        (await QuestionRepository.getUnits()).map((u) => u.id),
+        isNot(contains('u1')),
+      );
     });
   });
 

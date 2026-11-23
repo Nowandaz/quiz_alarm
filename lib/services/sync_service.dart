@@ -30,6 +30,7 @@ import '../data/alarm_log.dart';
 import '../data/app_database.dart';
 import '../data/flag_store.dart';
 import '../data/question_repository.dart';
+import '../models/models.dart';
 import 'account.dart';
 import 'entitlements.dart';
 import 'profile_picture.dart';
@@ -407,6 +408,15 @@ class SyncService {
     final startedAt = DateTime.now().toUtc();
     final units = await _allById('units', {'select': '*'}, token: token);
     final topics = await _allById('topics', {'select': '*'}, token: token);
+    // Subunits and sections. A server from before they existed has no such
+    // table (404, or 400): the bank then arrives as before, without them.
+    List<Map<String, dynamic>>? sections;
+    try {
+      sections = await _allById('sections', {'select': '*'}, token: token);
+    } on _SyncError catch (e) {
+      if (e.status != 404 && e.status != 400) rethrow;
+      debugPrint('This server has no sections: $e');
+    }
     const columns =
         'id,topic_id,type,text,options,answer,alt_answers,explanation,'
         'image_path,status,deleted_at,updated_at';
@@ -479,6 +489,46 @@ class SyncService {
         );
       }
 
+      if (sections != null) {
+        final liveSections = <String>{};
+        for (final x in sections) {
+          final id = x['id'] as String;
+          if (x['deleted_at'] != null || !liveUnits.contains(x['unit_id'])) {
+            continue;
+          }
+          liveSections.add(id);
+          final row = <String, Object?>{
+            'id': id,
+            'unit_id': x['unit_id'],
+            'parent_id': x['parent_id'],
+            'kind': x['kind'] == Section.subunitKind
+                ? Section.subunitKind
+                : Section.sectionKind,
+            'name': '${x['name'] ?? ''}',
+            'description': '${x['description'] ?? ''}',
+            'sort_order': x['sort_order'] ?? 0,
+          };
+          final had = await txn.query(
+            'sections',
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+          changed |= had.isEmpty || row.keys.any((k) => had.first[k] != row[k]);
+          await txn.insert(
+            'sections',
+            row,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        // Sections the server deleted or no longer has. Their topics stay,
+        // filed as the server says.
+        for (final row in await txn.query('sections', columns: ['id'])) {
+          if (liveSections.contains(row['id'])) continue;
+          await txn.delete('sections', where: 'id = ?', whereArgs: [row['id']]);
+          changed = true;
+        }
+      }
+
       final liveTopics = <String>{};
       for (final t in topics) {
         final id = t['id'] as String;
@@ -496,14 +546,38 @@ class SyncService {
         // A topic that opened or locked shows differently straight away.
         changed |= had.isEmpty || had.first['access'] != access;
         liveTopics.add(id);
+        // The section it is filed under. An older server does not send
+        // one: what the phone has is then left alone.
+        final filed = t.containsKey('section_id');
+        final sectionId = t['section_id'] as String?;
+        changed |=
+            filed && had.isNotEmpty && had.first['section_id'] != sectionId;
         await txn.rawInsert(
-          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom, access) '
-          'VALUES(?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET '
+          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom, access, '
+          'section_id) VALUES(?,?,?,?,0,?,?) ON CONFLICT(id) DO UPDATE SET '
           'unit_id = excluded.unit_id, name = excluded.name, '
           'sort_order = excluded.sort_order, is_custom = 0, '
-          'access = excluded.access',
-          [id, t['unit_id'], t['name'], t['sort_order'] ?? 0, access],
+          'access = excluded.access'
+          '${filed ? ', section_id = excluded.section_id' : ''}',
+          [
+            id,
+            t['unit_id'],
+            t['name'],
+            t['sort_order'] ?? 0,
+            access,
+            sectionId,
+          ],
         );
+        // How many published questions the topic has on the server (sent
+        // by newer servers): a topic with none is hidden until it has some.
+        if (t['question_count'] is int) {
+          final known = had.isEmpty ? null : had.first['server_questions'];
+          changed |= known != t['question_count'];
+          await txn.rawUpdate(
+            'UPDATE topics SET server_questions = ? WHERE id = ?',
+            [t['question_count'], id],
+          );
+        }
       }
 
       if (full) {
@@ -657,7 +731,12 @@ class SyncService {
     );
     await txn.update(
       'topics',
-      {'unit_id': QuestionRepository.customUnitId, 'is_custom': 1},
+      // "My topics" has no sections.
+      {
+        'unit_id': QuestionRepository.customUnitId,
+        'is_custom': 1,
+        'section_id': null,
+      },
       where: 'id = ?',
       whereArgs: [id],
     );

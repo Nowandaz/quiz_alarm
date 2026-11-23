@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
 import 'services/account.dart';
+import 'services/announcements.dart';
 import 'services/alarm_backend.dart';
 import 'services/alarm_provider.dart';
 import 'data/alarm_log.dart';
@@ -52,6 +53,9 @@ Future<void> main() async {
   UsagePing.send();
   // Is a newer version of the app out?
   UpdateCheck.run();
+  // Messages from the team: the saved ones at once, then any new ones.
+  await Announcements.load();
+  Announcements.run();
 
   // Syncing with the server: at start, shortly after anything of the
   // user's changes, and when they sign in or out.

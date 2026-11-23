@@ -3,6 +3,8 @@
 /// Question banks ship as JSON files in `assets/question_banks/`. Each file
 /// is one unit with its topics and questions; it is copied into the database
 /// the first time the app runs and again whenever its `version` goes up.
+/// A topic in a file may name the section it belongs to (`"section"`) and
+/// the subunit that section is in (`"subunit"`).
 /// Questions keep their ids across re-imports, so progress is never lost.
 library;
 
@@ -116,23 +118,61 @@ class QuestionRepository {
         ],
       );
 
+      // Subunits and sections named by the topics, in file order:
+      // id -> the id of its subunit (null when it has none).
+      final placed = <String, String?>{};
+      Future<String> place(String kind, String name, {String? parentId}) async {
+        final prefix = kind == Section.subunitKind ? 'sub' : 'sec';
+        var id = '$unitId-$prefix-${slug(name)}';
+        // The same section name under two subunits is two sections.
+        if (placed.containsKey(id) && placed[id] != parentId) {
+          id = '$parentId-$prefix-${slug(name)}';
+        }
+        if (placed.containsKey(id)) return id;
+        await txn.rawInsert(
+          'INSERT INTO sections(id, unit_id, parent_id, kind, name, sort_order) '
+          'VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET '
+          'unit_id = excluded.unit_id, parent_id = excluded.parent_id, '
+          'kind = excluded.kind, name = excluded.name, '
+          'sort_order = excluded.sort_order',
+          [id, unitId, parentId, kind, name, placed.length],
+        );
+        placed[id] = parentId;
+        return id;
+      }
+
       final keepTopics = <String>[];
       final keepQuestions = <String>[];
       final topics = (data['topics'] as List).cast<Map<String, dynamic>>();
       for (var t = 0; t < topics.length; t++) {
         final topicId = topics[t]['id'] as String;
         keepTopics.add(topicId);
+        final sectionName = '${topics[t]['section'] ?? ''}'.trim();
+        final subunitName = '${topics[t]['subunit'] ?? ''}'.trim();
+        String? sectionId;
+        if (sectionName.isNotEmpty) {
+          final subunitId = subunitName.isEmpty
+              ? null
+              : await place(Section.subunitKind, subunitName);
+          sectionId = await place(
+            Section.sectionKind,
+            sectionName,
+            parentId: subunitId,
+          );
+        }
         await txn.rawInsert(
-          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom, access) '
-          'VALUES(?,?,?,?,0,?) ON CONFLICT(id) DO UPDATE SET '
+          'INSERT INTO topics(id, unit_id, name, sort_order, is_custom, access, '
+          'section_id) VALUES(?,?,?,?,0,?,?) ON CONFLICT(id) DO UPDATE SET '
           'unit_id = excluded.unit_id, name = excluded.name, '
-          'sort_order = excluded.sort_order, access = excluded.access',
+          'sort_order = excluded.sort_order, access = excluded.access, '
+          'section_id = excluded.section_id',
           [
             topicId,
             unitId,
             topics[t]['name'],
             t,
             cleanAccess(topics[t]['access']),
+            sectionId,
           ],
         );
 
@@ -189,6 +229,13 @@ class QuestionRepository {
         '${keepTopics.isEmpty ? '' : 'AND id NOT IN ($tMarks) '}'
         'AND id NOT IN (SELECT DISTINCT topic_id FROM questions)',
         [unitId, ...keepTopics],
+      );
+      // Sections the file no longer names.
+      final sMarks = List.filled(placed.length, '?').join(',');
+      await txn.rawDelete(
+        'DELETE FROM sections WHERE unit_id = ? '
+        '${placed.isEmpty ? '' : 'AND id NOT IN ($sMarks)'}',
+        [unitId, ...placed.keys],
       );
 
       await txn.insert('meta', {
@@ -260,12 +307,42 @@ class QuestionRepository {
     isCustom: r['is_custom'] == 1,
     description: (r['description'] ?? '') as String,
     access: cleanAccess(r['access']),
+    sectionId: r['section_id'] as String?,
   );
+
+  /// Every subunit and section, in the order they are shown.
+  static Future<List<Section>> getSections() async {
+    await ensureReady();
+    final rows = await (await _db).query(
+      'sections',
+      orderBy: 'sort_order, name',
+    );
+    return [
+      for (final r in rows)
+        Section(
+          id: r['id'] as String,
+          unitId: r['unit_id'] as String,
+          parentId: r['parent_id'] as String?,
+          kind: r['kind'] == Section.subunitKind
+              ? Section.subunitKind
+              : Section.sectionKind,
+          name: r['name'] as String,
+          description: (r['description'] ?? '') as String,
+          sortOrder: (r['sort_order'] as int?) ?? 0,
+        ),
+    ];
+  }
 
   static Future<List<Topic>> getTopics() async {
     await ensureReady();
     final rows = await (await _db).rawQuery(
+      // A bank topic the server says has no published question yet is
+      // part of the outline still being written: it is not shown (it
+      // would otherwise look like a locked topic with nothing behind it).
       'SELECT t.* FROM topics t JOIN units u ON u.id = t.unit_id '
+      'WHERE t.is_custom = 1 OR t.server_questions IS NULL '
+      'OR t.server_questions > 0 '
+      'OR EXISTS (SELECT 1 FROM questions q WHERE q.topic_id = t.id) '
       'ORDER BY u.sort_order, u.name, t.sort_order, t.name',
     );
     return rows.map(_topicFromRow).toList();
@@ -445,8 +522,10 @@ class QuestionRepository {
     await prefs.setStringList(archivedUnitsPref, ids.toList()..sort());
   }
 
-  /// Turns what an alarm or a session stores (topic ids, unit ids, or names
-  /// from older versions) into topic ids. Empty or unknown input means
+  /// Turns what an alarm or a session stores (topic ids, section or
+  /// subunit ids, unit ids, or names from older versions) into topic ids.
+  /// A section, subunit or unit stands for every topic inside it, so a
+  /// topic added to it later is included. Empty or unknown input means
   /// every topic, leaving out the units in [archived]. A unit or topic
   /// that is named still counts when archived: an alarm set on it keeps
   /// working. If every unit is archived, "every topic" really is every
@@ -459,6 +538,7 @@ class QuestionRepository {
     Iterable<String> selectors,
     List<StudyUnit> units,
     List<Topic> topics, {
+    List<Section> sections = const [],
     Set<String> archived = const {},
   }) {
     final ids = <String>{};
@@ -469,10 +549,16 @@ class QuestionRepository {
           .where((u) => u.id.toLowerCase() == s || u.name.toLowerCase() == s)
           .map((u) => u.id)
           .toSet();
+      // A section named by its id, or a subunit and the sections in it.
+      final sectionIds = {
+        for (final x in sections)
+          if (x.id.toLowerCase() == s || x.parentId?.toLowerCase() == s) x.id,
+      };
       for (final t in topics) {
         if (t.id.toLowerCase() == s ||
             t.name.toLowerCase() == s ||
-            unitIds.contains(t.unitId)) {
+            unitIds.contains(t.unitId) ||
+            sectionIds.contains(t.sectionId)) {
           if (isOpen(t)) ids.add(t.id);
         }
       }
@@ -492,8 +578,59 @@ class QuestionRepository {
     selectors,
     await getUnits(),
     await getTopics(),
+    sections: await getSections(),
     archived: await getArchivedUnits(),
   );
+
+  /// The open topics beneath each unit, subunit and section, keyed by its
+  /// id. A subunit or section with no open topic is not in the map.
+  static Map<String, Set<String>> _openGroups(
+    List<StudyUnit> units,
+    List<Section> sections,
+    List<Topic> topics,
+  ) {
+    final parentOf = {for (final x in sections) x.id: x.parentId};
+    final groups = {for (final u in units) u.id: <String>{}};
+    for (final t in topics.where(isOpen)) {
+      groups[t.unitId]?.add(t.id);
+      final section = t.sectionId;
+      if (section == null || !parentOf.containsKey(section)) continue;
+      groups.putIfAbsent(section, () => {}).add(t.id);
+      final subunit = parentOf[section];
+      if (subunit != null && parentOf.containsKey(subunit)) {
+        groups.putIfAbsent(subunit, () => {}).add(t.id);
+      }
+    }
+    return groups;
+  }
+
+  /// What to store for the ticked [topicIds]: the topic ids themselves,
+  /// plus the id of every unit, subunit and section whose open topics are
+  /// all ticked (only the highest one: a ticked unit covers its sections).
+  /// That id is what brings in a topic added there later; the topic ids
+  /// keep the selection working should the section itself go away.
+  static List<String> selectorsFor(
+    Set<String> topicIds,
+    List<StudyUnit> units,
+    List<Section> sections,
+    List<Topic> topics,
+  ) {
+    final groups = _openGroups(units, sections, topics);
+    bool whole(String? id) {
+      final inside = groups[id];
+      return inside != null &&
+          inside.isNotEmpty &&
+          topicIds.containsAll(inside);
+    }
+
+    return [
+      for (final u in units)
+        if (whole(u.id)) u.id,
+      for (final x in sections)
+        if (whole(x.id) && !whole(x.unitId) && !whole(x.parentId)) x.id,
+      ...topicIds,
+    ];
+  }
 
   /// A short human label for what [selectors] cover, e.g.
   /// "Pharmacology" or "Antimicrobials, CNS drugs".
@@ -501,28 +638,52 @@ class QuestionRepository {
     Iterable<String> selectors,
     List<StudyUnit> units,
     List<Topic> topics, {
+    List<Section> sections = const [],
     Set<String> archived = const {},
   }) {
     final wanted = selectors.where((s) => s.trim().isNotEmpty).toList();
     if (wanted.isEmpty || topics.isEmpty) return 'All topics';
-    final ids = resolveIn(wanted, units, topics, archived: archived).toSet();
+    final ids = resolveIn(
+      wanted,
+      units,
+      topics,
+      sections: sections,
+      archived: archived,
+    ).toSet();
     // The same set an empty selection stands for.
     final all = resolveIn(const [], units, topics, archived: archived);
     if (ids.length == all.length && ids.containsAll(all)) return 'All topics';
 
+    final groups = _openGroups(units, sections, topics);
     final parts = <String>[];
     for (final u in units) {
       // A unit is named when all of its open topics are picked.
-      final inUnit = topics
-          .where((t) => t.unitId == u.id && isOpen(t))
-          .toList();
-      final picked = inUnit.where((t) => ids.contains(t.id)).toList();
+      final inUnit = groups[u.id] ?? const <String>{};
+      final picked = inUnit.where(ids.contains).toSet();
       if (picked.isEmpty) continue;
       if (picked.length == inUnit.length) {
         parts.add(u.name);
-      } else {
-        parts.addAll(picked.map((t) => t.name));
+        continue;
       }
+      // So is a subunit or a section, when it holds several topics (one
+      // topic is better called by its own name).
+      final named = <String>{};
+      final inside = sections.where((x) => x.unitId == u.id);
+      for (final x in [
+        ...inside.where((x) => x.isSubunit),
+        ...inside.where((x) => !x.isSubunit),
+      ]) {
+        final held = groups[x.id] ?? const <String>{};
+        if (held.length < 2 || !ids.containsAll(held)) continue;
+        if (named.containsAll(held)) continue; // its subunit was named
+        parts.add(x.name);
+        named.addAll(held);
+      }
+      parts.addAll(
+        topics
+            .where((t) => picked.contains(t.id) && !named.contains(t.id))
+            .map((t) => t.name),
+      );
     }
     if (parts.length > 3) {
       return '${parts.take(2).join(', ')} +${parts.length - 2} more';
@@ -535,6 +696,7 @@ class QuestionRepository {
         selectors,
         await getUnits(),
         await getTopics(),
+        sections: await getSections(),
         archived: await getArchivedUnits(),
       );
 

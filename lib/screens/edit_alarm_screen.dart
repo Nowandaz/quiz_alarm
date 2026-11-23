@@ -71,7 +71,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
 
   late TimeOfDay _selectedTime;
   late final TextEditingController _labelCtrl;
-  late List<String> _topics; // topic/unit ids; empty = all topics
+  late List<String> _topics; // topic/section/unit ids; empty = all topics
   late String _audioPath;
   late String _audioName;
   late bool _vibrate;
@@ -234,7 +234,9 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     final everything = bank.openTopics.map((t) => t.id).toSet();
     final all =
         picked.length == everything.length && picked.containsAll(everything);
-    setState(() => _topics = all ? [] : picked.toList());
+    // A whole unit, subunit or section is stored by its own id as well,
+    // so that topics added to it later are asked too.
+    setState(() => _topics = all ? [] : bank.selectorsFor(picked));
   }
 
   /// The folder uploaded ringtones are kept in.

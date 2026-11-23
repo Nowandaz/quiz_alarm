@@ -1,7 +1,8 @@
 /// Question Banks tab: one card per unit (Pharmacology, Pathology...) with
-/// its mastery. Tap a unit to see its topics. "Practise" opens the set-up
-/// sheet where topics, number of questions and source are chosen. Units
-/// the user archived sit in a closed "Archived" list at the bottom.
+/// its mastery. Tap a unit to see its sections and topics. The search box
+/// finds sections and topics. "Practise" opens the set-up sheet where
+/// topics, number of questions and source are chosen. Units the user
+/// archived sit in a closed "Archived" list at the bottom.
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -16,6 +17,7 @@ import '../../widgets/app_widgets.dart';
 import '../../widgets/coach_tour.dart';
 import '../../widgets/lock_prompt.dart';
 import '../practice_setup.dart';
+import '../section_screen.dart';
 import '../unit_screen.dart';
 import '../topic_screen.dart';
 
@@ -196,6 +198,21 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
     bool matches(Topic t) =>
         t.name.toLowerCase().contains(q) ||
         units.any((u) => u.id == t.unitId && u.name.toLowerCase().contains(q));
+    String? unitName(String unitId) =>
+        units.where((u) => u.id == unitId).map((u) => u.name).firstOrNull;
+    // Subunits and sections called what was typed. One that only wraps a
+    // single topic already in the results is left out.
+    final foundSections = q.isEmpty
+        ? const <Section>[]
+        : [
+            for (final x in bank.sections)
+              if (x.name.toLowerCase().contains(q) &&
+                  !bank.isArchived(x.unitId))
+                if (bank.topicsUnder(x.id) case final inside
+                    when inside.length > 1 ||
+                        (inside.length == 1 && !matches(inside.single)))
+                  x,
+          ];
 
     return ListView(
       padding: padding,
@@ -221,7 +238,7 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
           onChanged: (v) => setState(() => _query = v),
           textInputAction: TextInputAction.search,
           decoration: InputDecoration(
-            hintText: 'Search units and topics',
+            hintText: 'Search units, sections and topics',
             prefixIcon: const Icon(Icons.search_rounded),
             suffixIcon: _query.isEmpty
                 ? null
@@ -238,16 +255,21 @@ class _QuestionBankTabState extends State<QuestionBankTab> {
         const SizedBox(height: 14),
         // While searching: the matching topics, straight to the topic.
         if (q.isNotEmpty) ...[
+          for (final section in foundSections)
+            SectionCard(
+              section: section,
+              place: [
+                ?unitName(section.unitId),
+                ?bank.parentOf(section)?.name,
+              ].join(' \u00b7 '),
+            ),
           for (final topic in topics.where(matches))
             TopicCard(
               topic: topic,
               stats: bank.statsOf(topic.id),
-              unitName: units
-                  .where((u) => u.id == topic.unitId)
-                  .map((u) => u.name)
-                  .firstOrNull,
+              unitName: bank.placeOf(topic),
             ),
-          if (!topics.any(matches))
+          if (foundSections.isEmpty && !topics.any(matches))
             Padding(
               padding: const EdgeInsets.all(24),
               child: Text(

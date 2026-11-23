@@ -1,5 +1,7 @@
-/// One unit (e.g. Pharmacology): its mastery, a "Practise" button and the
-/// list of its topics. A unit can be archived here (hidden, never deleted).
+/// One unit (e.g. Pharmacology): its mastery, a "Practise" button and what
+/// it holds: its sections (or subunits) as cards, then "Other topics" for
+/// topics in no section. A unit without sections lists its topics.
+/// A unit can be archived here (hidden, never deleted).
 library;
 
 import 'package:material_ui/material_ui.dart';
@@ -12,6 +14,7 @@ import '../services/question_service.dart';
 import '../widgets/app_widgets.dart';
 import '../widgets/lock_prompt.dart';
 import 'practice_setup.dart';
+import 'section_screen.dart';
 import 'tabs/question_bank_tab.dart' show showAddTopicDialog;
 import 'topic_screen.dart';
 
@@ -66,12 +69,9 @@ class UnitScreen extends StatelessWidget {
     final bank = context.watch<BankProvider>();
     final theme = Theme.of(context);
     final topics = bank.topicsOf(unit.id);
-    final total = topics.fold<int>(0, (n, t) => n + bank.statsOf(t.id).total);
-    final mastered = topics.fold<int>(
-      0,
-      (n, t) => n + bank.statsOf(t.id).mastered,
-    );
-    final share = total == 0 ? 0.0 : mastered / total;
+    final sections = bank.filledSectionsOf(unit.id);
+    // With no sections every topic is listed, as before sections existed.
+    final loose = sections.isEmpty ? topics : bank.unfiledTopics(unit.id);
     final archived = bank.isArchived(unit.id);
 
     return Scaffold(
@@ -139,72 +139,10 @@ class UnitScreen extends StatelessWidget {
                 ],
               ),
             ),
-          GlossCard(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${plural(topics.length, 'topic')} \u00b7 '
-                        '${plural(total, 'question')}',
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                    FilledButton(
-                      onPressed: total == 0
-                          ? null
-                          : () => showPracticeSetup(
-                              context,
-                              initialTopics: {
-                                for (final t in topics)
-                                  if (bank.isOpen(t)) t.id,
-                              },
-                              title: unit.name,
-                            ),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(0, 42),
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
-                      ),
-                      child: const Text('Practise'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Overall subject mastery',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${(share * 100).round()}% mastered',
-                      style: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: share,
-                  minHeight: 8,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                if (unit.description.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(unit.description, style: theme.textTheme.bodySmall),
-                ],
-              ],
-            ),
+          BankHeaderCard(
+            topics: topics,
+            title: unit.name,
+            description: unit.description,
           ),
           const SizedBox(height: 14),
           if (topics.isEmpty)
@@ -212,7 +150,13 @@ class UnitScreen extends StatelessWidget {
               padding: EdgeInsets.all(24),
               child: Text('No topics yet.', textAlign: TextAlign.center),
             ),
-          for (final topic in topics)
+          for (final section in sections) SectionCard(section: section),
+          if (sections.isNotEmpty && loose.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
+              child: Text('Other topics', style: theme.textTheme.titleSmall),
+            ),
+          for (final topic in loose)
             TopicCard(topic: topic, stats: bank.statsOf(topic.id)),
         ],
       ),
@@ -220,11 +164,121 @@ class UnitScreen extends StatelessWidget {
   }
 }
 
+/// The card at the top of a unit, subunit or section: how much it holds,
+/// "Practise" for everything beneath it, and the mastery bar.
+class BankHeaderCard extends StatelessWidget {
+  /// Every topic beneath.
+  final List<Topic> topics;
+
+  /// Names the practice session in the reports.
+  final String title;
+
+  /// Goes before the topic count, e.g. "3 sections".
+  final String? lead;
+  final String description;
+  const BankHeaderCard({
+    super.key,
+    required this.topics,
+    required this.title,
+    this.lead,
+    this.description = '',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bank = context.watch<BankProvider>();
+    final theme = Theme.of(context);
+    final stats = bank.statsFor(topics);
+    final total = stats.total;
+    final share = total == 0 ? 0.0 : stats.mastered / total;
+    return GlossCard(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '${lead == null ? '' : '$lead \u00b7 '}'
+                  '${plural(topics.length, 'topic')} \u00b7 '
+                  '${plural(total, 'question')}',
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ),
+              FilledButton(
+                onPressed: total == 0
+                    ? null
+                    : () => showPracticeSetup(
+                        context,
+                        initialTopics: {
+                          for (final t in topics)
+                            if (bank.isOpen(t)) t.id,
+                        },
+                        title: title,
+                      ),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 42),
+                  padding: const EdgeInsets.symmetric(horizontal: 18),
+                ),
+                child: const Text('Practise'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Overall subject mastery',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Text(
+                '${(share * 100).round()}% mastered',
+                style: TextStyle(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: share,
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(description, style: theme.textTheme.bodySmall),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens [topic], or says why it is locked.
+void openTopic(BuildContext context, Topic topic) {
+  if (!context.read<BankProvider>().isOpen(topic)) {
+    showTopicLockedSheet(context, topic);
+    return;
+  }
+  Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
+  );
+}
+
 class TopicCard extends StatelessWidget {
   final Topic topic;
   final TopicStats stats;
 
-  /// Shown above the topic name in search results.
+  /// Shown above the topic name in search results: where the topic is.
   final String? unitName;
   const TopicCard({
     super.key,
@@ -244,12 +298,7 @@ class TopicCard extends StatelessWidget {
       child: Card(
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => locked
-              ? showTopicLockedSheet(context, topic)
-              : Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => TopicScreen(topic: topic)),
-                ),
+          onTap: () => openTopic(context, topic),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
             child: Row(
