@@ -2,7 +2,7 @@
 ///
 /// The app is shared as an install file, not through a store, so nothing
 /// updates it by itself. The owner lists each new version on the admin
-/// site; the app reads the newest one (about twice a day, when it is
+/// site; the app reads the newest one (every few hours, when it is
 /// open or an alarm wakes it), and if it is newer than the one installed
 /// it shows a notification and a banner that lead to the download page.
 library;
@@ -47,7 +47,9 @@ class UpdateCheck {
   static const String checkedPref = 'update_checked_at';
   static const String noticedPref = 'update_noticed_version';
   static const String dismissedPref = 'update_dismissed_version';
-  static const Duration every = Duration(hours: 12);
+  static const String knownVersionPref = 'update_known_version';
+  static const String knownNotesPref = 'update_known_notes';
+  static const Duration every = Duration(hours: 3);
 
   static Future<String> _installed() async {
     // What Android says is installed; the constant is the fallback.
@@ -88,6 +90,15 @@ class UpdateCheck {
       final last = prefs.getInt(checkedPref) ?? 0;
       final t = now().millisecondsSinceEpoch;
       if (!force && t - last < every.inMilliseconds && t >= last) {
+        // Not asking the server this time: the banner still shows for
+        // the version it told us about before.
+        final known = prefs.getString(knownVersionPref) ?? '';
+        available.value =
+            known.isNotEmpty &&
+                prefs.getString(dismissedPref) != known &&
+                isNewer(known, await installedVersion())
+            ? AppRelease(known, prefs.getString(knownNotesPref) ?? '')
+            : null;
         return;
       }
       final res = await httpClient
@@ -111,6 +122,8 @@ class UpdateCheck {
       }
       final version = '${rows.first['version'] ?? ''}'.trim();
       final notes = '${rows.first['notes'] ?? ''}'.trim();
+      await prefs.setString(knownVersionPref, version);
+      await prefs.setString(knownNotesPref, notes);
       if (version.isEmpty || !isNewer(version, await installedVersion())) {
         available.value = null;
         return;

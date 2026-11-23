@@ -103,4 +103,21 @@ void main() {
     await UpdateCheck.run();
     expect(UpdateCheck.available.value?.version, '1.0.1');
   });
+
+  test('the banner comes back after a restart without asking again', () async {
+    serve('1.0.1');
+    await UpdateCheck.run();
+    expect(calls, 1);
+    // The app is closed and opened an hour later.
+    UpdateCheck.available.value = null;
+    clock = clock.add(const Duration(hours: 1));
+    await UpdateCheck.run();
+    expect(calls, 1);
+    expect(UpdateCheck.available.value?.version, '1.0.1');
+    expect(notices, hasLength(1));
+    // Once the update is installed the banner is gone.
+    UpdateCheck.installedVersion = () async => '1.0.1';
+    await UpdateCheck.run();
+    expect(UpdateCheck.available.value, isNull);
+  });
 }
