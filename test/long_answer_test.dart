@@ -329,7 +329,7 @@ void main() {
 
     // Make it the database version 8 left behind.
     final old = await databaseFactoryFfiNoIsolate.openDatabase(path);
-    for (final column in ['marks', 'long_answer', 'key_points']) {
+    for (final column in ['marks', 'long_answer', 'key_points', 'revealed']) {
       await old.execute('ALTER TABLE questions DROP COLUMN $column');
     }
     await old.insert('meta', {
@@ -342,7 +342,7 @@ void main() {
     QuestionRepository.resetForTest();
     final db = await AppDatabase.instance;
     expect(await db.getVersion(), AppDatabase.schemaVersion);
-    expect(AppDatabase.schemaVersion, 9);
+    expect(AppDatabase.schemaVersion, 10);
     final mine = (await QuestionRepository.getQuestions(topic.id)).single;
     expect(mine.id, 'mine-1');
     expect(mine.marks, 1);

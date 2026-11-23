@@ -2,6 +2,8 @@
 /// and browse every question with its answer and explanation.
 library;
 
+import 'dart:math';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -36,6 +38,9 @@ class _TopicScreenState extends State<TopicScreen> {
   String _filter = 'all'; // all | todo | done
   bool _generating = false;
 
+  // Bank questions of this topic that have not been brought out yet.
+  int _waiting = 0;
+
   @override
   void initState() {
     super.initState();
@@ -55,11 +60,23 @@ class _TopicScreenState extends State<TopicScreen> {
     final progress = await QuestionRepository.getQuestionProgress(
       widget.topic.id,
     );
+    final waiting = await QuestionRepository.waitingCount(widget.topic.id);
     if (!mounted) return;
     setState(() {
       _questions = list;
       _progress = progress;
+      _waiting = waiting;
     });
+  }
+
+  Future<void> _loadMore() async {
+    final n = await QuestionRepository.revealMore(widget.topic.id);
+    QuestionService.changes.value++;
+    await _load();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Added ${plural(n, 'question')} from the bank.')),
+    );
   }
 
   void _message(String title, String body) {
@@ -213,6 +230,21 @@ class _TopicScreenState extends State<TopicScreen> {
                     minimumSize: const Size.fromHeight(48),
                   ),
                 ),
+                // More of this topic is waiting in the question bank.
+                if (_waiting > 0 && Entitlements.instance.isPaid) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _loadMore,
+                    icon: const Icon(Icons.download_rounded),
+                    label: Text(
+                      'Load ${min(_waiting, QuestionRepository.topicBatch)} '
+                      'more from the bank ($_waiting waiting)',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 Text('Questions', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 8),

@@ -22,7 +22,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 class AppDatabase {
-  static const int schemaVersion = 9;
+  static const int schemaVersion = 10;
   static const String fileName = 'brainwake.db';
 
   /// Meta key: when the whole bank was last compared with the server
@@ -103,7 +103,8 @@ class AppDatabase {
         synced INTEGER NOT NULL DEFAULT 0,
         marks INTEGER NOT NULL DEFAULT 1,
         long_answer INTEGER NOT NULL DEFAULT 0,
-        key_points TEXT NOT NULL DEFAULT '[]'
+        key_points TEXT NOT NULL DEFAULT '[]',
+        revealed INTEGER NOT NULL DEFAULT 1
       )''');
     batch.execute(
       'CREATE UNIQUE INDEX idx_questions_unique ON questions(topic_id, text_key)',
@@ -289,6 +290,20 @@ class AppDatabase {
       // Long answer questions already on the server did not change, so
       // only a whole comparison brings them: make the next sync one.
       await db.delete('meta', where: 'key = ?', whereArgs: [bankFullKey]);
+    }
+    if (from < 10) {
+      // A topic shows its first questions and brings out more of the bank
+      // when asked ("revealed"). Questions already answered stay out; the
+      // rest of each topic is set out again the next time the bank is read
+      // (QuestionRepository.revealBaseline).
+      await db.execute(
+        'ALTER TABLE questions ADD COLUMN revealed INTEGER NOT NULL DEFAULT 1',
+      );
+      await db.execute(
+        "UPDATE questions SET revealed = 0 WHERE source IN ('seed', 'server') "
+        'AND id NOT IN (SELECT question_id FROM attempts '
+        'WHERE question_id IS NOT NULL)',
+      );
     }
   }
 

@@ -301,6 +301,10 @@ class AlarmProvider extends ChangeNotifier {
       final selectors = alarms.any((a) => a.topics.isEmpty)
           ? const <String>[]
           : alarms.expand((a) => a.topics).toSet().toList();
+      // More of the bank for topics an alarm is half way through.
+      if (await QuestionRepository.revealForAlarms(selectors) > 0) {
+        QuestionService.changes.value++;
+      }
       final result = await QuestionService.topUp(selectors);
       if (result.error != null) {
         debugPrint('Question top-up failed: ${result.error}');

@@ -234,6 +234,8 @@ class _AlarmRingScreenState extends State<AlarmRingScreen> {
           result == 'snooze' ? 'snoozed' : 'dismissed',
         );
       } catch (_) {}
+      // Half way through a topic: more of the bank for the next ring.
+      unawaited(provider.refillQuestionBank());
       QuestionService.changes.value++;
     }
     if (!mounted) return;

@@ -130,8 +130,11 @@ class SyncService {
       if (signedIn && await _adoptOwner()) QuestionService.changes.value++;
       var bankOk = false;
       try {
-        if (await _syncBank(full: fullBank)) QuestionService.changes.value++;
+        final bankChanged = await _syncBank(full: fullBank);
         bankOk = true;
+        // New questions wait in the bank; each topic keeps its first few out.
+        final out = await QuestionRepository.revealBaseline();
+        if (bankChanged || out) QuestionService.changes.value++;
       } catch (e) {
         problems.add('question bank: ${_short(e)}');
       }
@@ -139,7 +142,10 @@ class SyncService {
         try {
           // History is only brought back once the bank is in place:
           // answers can only be kept for questions the phone has.
-          if (bankOk && await _restoreOnce()) QuestionService.changes.value++;
+          if (bankOk && await _restoreOnce()) {
+            await QuestionRepository.revealBaseline();
+            QuestionService.changes.value++;
+          }
           await _upload();
           // Questions flagged for review (never throws).
           await FlagStore.upload();
@@ -627,8 +633,9 @@ class SyncService {
         await txn.rawInsert(
           'INSERT INTO questions(id, topic_id, type, text, text_key, options, '
           'answer, alt_answers, explanation, image, source, created_at, '
-          'marks, long_answer, key_points) '
-          "VALUES(?,?,?,?,?,?,?,?,?,?,'server',?,?,?,?) "
+          'marks, long_answer, key_points, revealed) '
+          // New ones wait in the bank until the topic brings them out.
+          "VALUES(?,?,?,?,?,?,?,?,?,?,'server',?,?,?,?,0) "
           'ON CONFLICT(id) DO UPDATE SET '
           'topic_id = excluded.topic_id, type = excluded.type, '
           'text = excluded.text, text_key = excluded.text_key, '
