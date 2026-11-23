@@ -346,7 +346,14 @@ class MainActivity : FlutterActivity() {
                                 "manufacturer" to Build.MANUFACTURER,
                                 "model" to Build.MODEL,
                                 "android" to Build.VERSION.RELEASE,
-                                "sdk" to Build.VERSION.SDK_INT
+                                "sdk" to Build.VERSION.SDK_INT,
+                                // The installed version ("1.0.1"), for the
+                                // "update available" check.
+                                "app_version" to (try {
+                                    packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+                                } catch (e: Exception) {
+                                    ""
+                                })
                             )
                         )
                     }

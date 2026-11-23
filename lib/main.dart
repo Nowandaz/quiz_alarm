@@ -17,6 +17,7 @@ import 'services/entitlements.dart';
 import 'services/profile_picture.dart';
 import 'services/sync_service.dart';
 import 'services/theme_provider.dart';
+import 'services/update_check.dart';
 import 'services/usage_ping.dart';
 import 'theme/app_theme.dart';
 
@@ -49,6 +50,8 @@ Future<void> main() async {
 
   // The anonymous "this phone uses the app" note (once a day at most).
   UsagePing.send();
+  // Is a newer version of the app out?
+  UpdateCheck.run();
 
   // Syncing with the server: at start, shortly after anything of the
   // user's changes, and when they sign in or out.
