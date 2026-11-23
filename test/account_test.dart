@@ -455,6 +455,53 @@ void main() {
     expect(account.userId, 'user-9');
   });
 
+  test('a link from our own email page is exchanged for the sign-in', () async {
+    final paths = <String>[];
+    Account.httpClient = MockClient((request) async {
+      paths.add('${request.method} ${request.url.path}');
+      if (request.url.path == '/auth/v1/verify') {
+        expect(jsonDecode(request.body), {
+          'type': 'signup',
+          'token_hash': 'abc123',
+        });
+        return http.Response(
+          '{"access_token":"a","refresh_token":"r","expires_in":3600}',
+          200,
+        );
+      }
+      return http.Response('{"id":"user-9","email":"new@example.com"}', 200);
+    });
+    expect(
+      await account.completeOAuth(
+        Uri.parse('brainwake://auth?token_hash=abc123&type=signup'),
+      ),
+      isNull,
+    );
+    expect(account.isSignedIn, isTrue);
+    expect(paths.first, 'POST /auth/v1/verify');
+  });
+
+  test('a new-password link from our own email page asks for the password '
+      'first, and a used one is explained', () async {
+    var used = false;
+    Account.httpClient = MockClient((request) async {
+      if (request.url.path == '/auth/v1/verify') {
+        if (used) return http.Response('{"msg":"expired"}', 403);
+        used = true;
+        return http.Response(
+          '{"access_token":"link-access","refresh_token":"r","expires_in":3600}',
+          200,
+        );
+      }
+      return http.Response('{"id":"user-1","email":"me@example.com"}', 200);
+    });
+    final link = Uri.parse('brainwake://auth?token_hash=h1&type=recovery');
+    expect(await account.completeOAuth(link), isNull);
+    expect(account.recovering.value, isTrue);
+    expect(account.isSignedIn, isFalse);
+    expect(await account.completeOAuth(link), contains('expired'));
+  });
+
   test('an expired email link is explained', () async {
     expect(
       await account.completeOAuth(

@@ -122,6 +122,17 @@ class _AlarmTabState extends State<AlarmTab> {
       showAlarmLimitSheet(context);
       return;
     }
+    // A snoozed alarm cannot be changed until it has rung again: editing
+    // it mid-snooze could end the snooze without the questions.
+    if (alarm != null &&
+        context.read<AlarmProvider>().snoozedUntil(alarm) != null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text(AlarmProvider.snoozedEditMessage)),
+        );
+      return;
+    }
     Navigator.push(
       context,
       MaterialPageRoute(

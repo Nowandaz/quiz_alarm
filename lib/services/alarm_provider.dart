@@ -697,6 +697,10 @@ class AlarmProvider extends ChangeNotifier {
   /// Shown when someone tries to switch off a snoozed alarm too early.
   static const String snoozeLockMessage = 'Snooze once more to turn this off.';
 
+  /// Shown when someone tries to open a snoozed alarm to change it.
+  static const String snoozedEditMessage =
+      'This alarm is snoozed. You can change it after it rings.';
+
   /// True when [alarm] has been snoozed often enough to be switched off
   /// without finishing the quiz.
   bool canTurnOff(AlarmItem alarm) =>

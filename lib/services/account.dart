@@ -343,6 +343,38 @@ class Account extends ChangeNotifier {
       }
       return _adoptEmailLink(session);
     }
+    // A link from one of our own emails: it carries a one-time code that
+    // is exchanged here for the sign-in (so the email never has to show
+    // the server's address).
+    final tokenHash = params['token_hash'];
+    if (tokenHash != null && tokenHash.isNotEmpty) {
+      final type = params['type'] ?? 'signup';
+      try {
+        final res = await _post('/verify', {
+          'type': type,
+          'token_hash': tokenHash,
+        });
+        if (res.statusCode != 200) {
+          return res.statusCode == 401 || res.statusCode == 403
+              ? 'That link has expired or was already used. Ask for a new one.'
+              : _reason(res);
+        }
+        final session = jsonDecode(utf8.decode(res.bodyBytes));
+        if (session is! Map<String, dynamic> ||
+            session['access_token'] == null) {
+          return 'That link could not be used. Ask for a new one.';
+        }
+        if (type == 'recovery') {
+          await _clear();
+          _recovery = session;
+          recovering.value = true;
+          return null;
+        }
+        return await _adoptEmailLink(session);
+      } catch (e) {
+        return _network(e);
+      }
+    }
     if (params['error_code'] == 'otp_expired') {
       return 'That link has expired or was already used. Ask for a new one.';
     }
