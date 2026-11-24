@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../services/alarm_provider.dart';
@@ -34,6 +35,18 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
   // are made by tool/make_ringtones.py).
   static const List<Map<String, String>> _defaultRingtones = [
     {'name': 'Default Alarm', 'path': 'assets/sounds/alarm.mp3'},
+    {
+      'name': 'Morning Marimba',
+      'path': 'assets/sounds/ringtones/morning_marimba.mp3',
+    },
+    {'name': 'Piano Dawn', 'path': 'assets/sounds/ringtones/piano_dawn.mp3'},
+    {'name': 'Music Box', 'path': 'assets/sounds/ringtones/music_box.mp3'},
+    {
+      'name': 'Kalimba Sunrise',
+      'path': 'assets/sounds/ringtones/kalimba_sunrise.mp3',
+    },
+    {'name': 'Sunrise', 'path': 'assets/sounds/ringtones/sunrise_swell.mp3'},
+    {'name': 'Upbeat', 'path': 'assets/sounds/ringtones/upbeat.mp3'},
     {
       'name': 'Classic Beep',
       'path': 'assets/sounds/ringtones/classic_beep.mp3',
@@ -72,6 +85,13 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
   late TimeOfDay _selectedTime;
   late final TextEditingController _labelCtrl;
   late List<String> _topics; // topic/section/unit ids; empty = all topics
+
+  // A new alarm starts with no topics chosen: the user says what it asks
+  // (which may be "all topics") before it can be saved.
+  late bool _topicsChosen;
+
+  /// The ringtone last chosen for any alarm: new alarms start with it.
+  static const String lastRingtonePref = 'last_ringtone';
   late String _audioPath;
   late String _audioName;
   late bool _vibrate;
@@ -99,8 +119,10 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     _selectedTime = a?.time ?? const TimeOfDay(hour: 7, minute: 0);
     _labelCtrl = TextEditingController(text: a?.label ?? 'Quiz Alarm');
     _topics = List.of(a?.topics ?? const []);
+    _topicsChosen = a != null;
     _audioPath = a?.audioPath ?? 'assets/sounds/alarm.mp3';
     _audioName = _nameOf(_audioPath);
+    if (a == null) _useLastRingtone();
     _vibrate = a?.vibrate ?? true;
     _fadeDuration = a?.fadeDuration ?? 30.0; // new alarms fade in gently
     _requiredStreak = a?.requiredStreak ?? AlarmItem.easyStreak;
@@ -119,6 +141,28 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     _previewPlayer.dispose();
     super.dispose();
   }
+
+  /// A new alarm takes the ringtone chosen last time (a bundled one or
+  /// the user's own file), unless the user picks another here first.
+  Future<void> _useLastRingtone() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final last = prefs.getString(lastRingtonePref);
+      if (last == null || last == _audioPath) return;
+      // A file of the user's own may have been removed since.
+      if (!last.startsWith('assets/') && !await File(last).exists()) return;
+      if (!mounted || _ringtoneTouched) return;
+      setState(() {
+        _audioPath = last;
+        _audioName = _nameOf(last);
+      });
+    } catch (e) {
+      debugPrint('Could not read the last ringtone: $e');
+    }
+  }
+
+  // True once the user has picked a ringtone on this screen.
+  bool _ringtoneTouched = false;
 
   String _nameOf(String path) {
     for (final tone in _defaultRingtones) {
@@ -149,6 +193,22 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       showAlarmLimitSheet(context);
       return;
     }
+    // What it asks must be chosen, not assumed.
+    if (!_topicsChosen) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Choose the topics this alarm will ask about.'),
+          ),
+        );
+      _pickTopics();
+      return;
+    }
+    // Alarms set from now on start with this ringtone.
+    SharedPreferences.getInstance().then(
+      (prefs) => prefs.setString(lastRingtonePref, _audioPath),
+    );
     final label = _labelCtrl.text.trim();
     final newAlarm = AlarmItem(
       id:
@@ -225,10 +285,16 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
     final bank = context.read<BankProvider>();
     final picked = await showTopicPickerSheet(
       context,
-      initial: bank.selectedIds(_topics),
+      // Nothing is ticked until the user has chosen.
+      initial: _topicsChosen ? bank.selectedIds(_topics) : const <String>{},
       title: 'Topics for this alarm',
     );
     if (picked == null || !mounted) return;
+    // Nothing ticked is not a choice: the alarm needs something to ask.
+    if (picked.isEmpty) {
+      setState(() => _topicsChosen = false);
+      return;
+    }
     // Every topic ticked is the same as "all topics", which also covers
     // topics added later. (Topics of archived units are not part of "all".)
     final everything = bank.openTopics.map((t) => t.id).toSet();
@@ -236,7 +302,10 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
         picked.length == everything.length && picked.containsAll(everything);
     // A whole unit, subunit or section is stored by its own id as well,
     // so that topics added to it later are asked too.
-    setState(() => _topics = all ? [] : bank.selectorsFor(picked));
+    setState(() {
+      _topics = all ? [] : bank.selectorsFor(picked);
+      _topicsChosen = true;
+    });
   }
 
   /// The folder uploaded ringtones are kept in.
@@ -327,6 +396,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
       setState(() {
         _audioPath = dest;
         _audioName = name;
+        _ringtoneTouched = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -403,6 +473,7 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
               setState(() {
                 _audioPath = path;
                 _audioName = name;
+                _ringtoneTouched = true;
               });
               refresh(() {});
             },
@@ -803,8 +874,12 @@ class _EditAlarmScreenState extends State<EditAlarmScreen> {
                 ListTile(
                   title: const Text('Topics'),
                   subtitle: Text(
-                    bank.describe(_topics),
-                    style: TextStyle(color: scheme.secondary),
+                    _topicsChosen
+                        ? bank.describe(_topics)
+                        : 'None chosen yet. Tap to choose.',
+                    style: TextStyle(
+                      color: _topicsChosen ? scheme.secondary : scheme.error,
+                    ),
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _pickTopics,

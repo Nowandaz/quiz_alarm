@@ -39,13 +39,14 @@ void main() {
     Widget screen, {
     List<AlarmItem> having = const [],
     PlanLevel level = PlanLevel.pro,
+    Map<String, Object> prefs = const {},
   }) async {
     // Wide enough for the test font, which is broader than the real one.
     tester.view.physicalSize = const Size(1600, 3200);
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
     await tester.runAsync(() async {
-      await resetApp();
+      await resetApp(prefs: prefs);
       plan.setForTest(level);
       alarms = AlarmProvider(backend: FakeBackend());
       await alarms.loaded;
@@ -159,8 +160,52 @@ void main() {
       expect(find.textContaining('-minute mercy snooze'), findsNothing);
     });
 
-    testWidgets('Done saves the alarm', (tester) async {
+    testWidgets('a new alarm is not saved until its topics are chosen', (
+      tester,
+    ) async {
       await show(tester, const EditAlarmScreen());
+      // Nothing is assumed: it says so, in place of "All topics".
+      expect(find.text('None chosen yet. Tap to choose.'), findsOneWidget);
+      expect(find.text('All topics'), findsNothing);
+      await tapDone(tester);
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(alarms.alarms, isEmpty);
+      // It says why, and opens the topic picker.
+      expect(
+        find.text('Choose the topics this alarm will ask about.'),
+        findsOneWidget,
+      );
+      expect(find.text('Topics for this alarm'), findsOneWidget);
+    });
+
+    testWidgets('a new alarm starts with the ringtone chosen last time', (
+      tester,
+    ) async {
+      await show(
+        tester,
+        const EditAlarmScreen(),
+        prefs: {'last_ringtone': 'assets/sounds/ringtones/piano_dawn.mp3'},
+      );
+      for (
+        var i = 0;
+        i < 10 && find.text('Piano Dawn').evaluate().isEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 50)),
+        );
+        await tester.pump();
+      }
+      expect(find.text('Piano Dawn'), findsOneWidget);
+      expect(find.text('Default Alarm'), findsNothing);
+    });
+
+    testWidgets('an existing alarm keeps its topics and saves as before', (
+      tester,
+    ) async {
+      final mine = alarm(4);
+      await show(tester, EditAlarmScreen(existingAlarm: mine), having: [mine]);
+      expect(find.text('None chosen yet. Tap to choose.'), findsNothing);
       await tapDone(tester);
       expect(alarms.alarms, hasLength(1));
       expect(alarms.alarms.single.volume, 1.0);
