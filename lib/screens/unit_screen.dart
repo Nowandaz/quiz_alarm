@@ -60,13 +60,107 @@ Future<bool> confirmArchiveUnit(BuildContext context, StudyUnit unit) async {
   return true;
 }
 
-class UnitScreen extends StatelessWidget {
+/// The search box inside a unit, subunit or section.
+class BankSearchField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final ValueChanged<String> onChanged;
+  const BankSearchField({
+    super.key,
+    required this.controller,
+    required this.onChanged,
+    this.hint = 'Search sections and topics',
+  });
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 14),
+    child: TextField(
+      controller: controller,
+      onChanged: onChanged,
+      textInputAction: TextInputAction.search,
+      decoration: InputDecoration(
+        hintText: hint,
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: controller.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: 'Clear search',
+                icon: const Icon(Icons.close_rounded),
+                onPressed: () {
+                  controller.clear();
+                  onChanged('');
+                },
+              ),
+      ),
+    ),
+  );
+}
+
+/// What a search inside a unit, subunit or section found: the sections
+/// (from [sections]) and topics (from [topics]) called something that
+/// contains [query]. A topic also matches by the section it is in.
+List<Widget> bankSearchResults(
+  BuildContext context, {
+  required String query,
+  required Iterable<Section> sections,
+  required Iterable<Topic> topics,
+}) {
+  final bank = context.read<BankProvider>();
+  final q = query.trim().toLowerCase();
+  final foundTopics = [
+    for (final t in topics)
+      if (t.name.toLowerCase().contains(q) || bank.sectionMatches(t, q)) t,
+  ];
+  final foundSections = [
+    for (final x in sections)
+      if (x.name.toLowerCase().contains(q) && bank.topicsUnder(x.id).length > 1)
+        x,
+  ];
+  return [
+    for (final x in foundSections)
+      SectionCard(section: x, place: bank.parentOf(x)?.name),
+    for (final t in foundTopics)
+      TopicCard(
+        topic: t,
+        stats: bank.statsOf(t.id),
+        unitName: bank.sectionOf(t)?.name,
+      ),
+    if (foundSections.isEmpty && foundTopics.isEmpty)
+      Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          'Nothing matches "${query.trim()}".',
+          textAlign: TextAlign.center,
+        ),
+      ),
+  ];
+}
+
+class UnitScreen extends StatefulWidget {
   final StudyUnit unit;
   const UnitScreen({super.key, required this.unit});
 
   @override
+  State<UnitScreen> createState() => _UnitScreenState();
+}
+
+class _UnitScreenState extends State<UnitScreen> {
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  StudyUnit get unit => widget.unit;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final bank = context.watch<BankProvider>();
+    final searching = _query.trim().isNotEmpty;
     final theme = Theme.of(context);
     final topics = bank.topicsOf(unit.id);
     final sections = bank.filledSectionsOf(unit.id);
@@ -150,14 +244,29 @@ class UnitScreen extends StatelessWidget {
               padding: EdgeInsets.all(24),
               child: Text('No topics yet.', textAlign: TextAlign.center),
             ),
-          for (final section in sections) SectionCard(section: section),
-          if (sections.isNotEmpty && loose.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
-              child: Text('Other topics', style: theme.textTheme.titleSmall),
+          // Worth a search box once there is more than a screenful.
+          if (topics.length > 6)
+            BankSearchField(
+              controller: _search,
+              onChanged: (v) => setState(() => _query = v),
             ),
-          for (final topic in loose)
-            TopicCard(topic: topic, stats: bank.statsOf(topic.id)),
+          if (searching)
+            ...bankSearchResults(
+              context,
+              query: _query,
+              sections: bank.sections.where((x) => x.unitId == unit.id),
+              topics: topics,
+            )
+          else ...[
+            for (final section in sections) SectionCard(section: section),
+            if (sections.isNotEmpty && loose.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 8, 4, 10),
+                child: Text('Other topics', style: theme.textTheme.titleSmall),
+              ),
+            for (final topic in loose)
+              TopicCard(topic: topic, stats: bank.statsOf(topic.id)),
+          ],
         ],
       ),
     );

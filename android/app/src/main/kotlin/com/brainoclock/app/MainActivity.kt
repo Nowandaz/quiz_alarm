@@ -368,7 +368,8 @@ class MainActivity : FlutterActivity() {
                                         mapOf(
                                             "reason" to it.reason,
                                             "at" to it.timestamp,
-                                            "description" to (it.description ?: "")
+                                            "description" to (it.description ?: ""),
+                                            "trace" to exitTrace(it)
                                         )
                                     }
                                 result.success(list)
@@ -377,6 +378,23 @@ class MainActivity : FlutterActivity() {
                             }
                         } catch (e: Exception) {
                             result.success(emptyList<Map<String, Any>>())
+                        }
+                    }
+                    "lastCrash" -> {
+                        // The error BrainApp noted when the app last crashed.
+                        try {
+                            val file = BrainApp.crashFile(applicationContext)
+                            if (!file.exists()) {
+                                result.success(null)
+                            } else {
+                                val text = file.readText()
+                                val at = text.substringBefore('\n').toLongOrNull() ?: 0L
+                                result.success(
+                                    mapOf("at" to at, "text" to text.substringAfter('\n'))
+                                )
+                            }
+                        } catch (e: Exception) {
+                            result.success(null)
                         }
                     }
                     "canUseFullScreenIntent" -> {
@@ -427,5 +445,52 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /**
+     * What Android kept about a crash in native code or a freeze (Android
+     * 12+): the readable parts of its record, which name the signal and
+     * the code that was running. Empty for every other kind of ending.
+     */
+    private fun exitTrace(info: android.app.ApplicationExitInfo): String {
+        if (Build.VERSION.SDK_INT < 31) return ""
+        if (info.reason != android.app.ApplicationExitInfo.REASON_CRASH_NATIVE &&
+            info.reason != android.app.ApplicationExitInfo.REASON_ANR
+        ) return ""
+        return try {
+            val bytes = info.traceInputStream?.use { stream ->
+                val buffer = ByteArray(400_000)
+                var size = 0
+                while (size < buffer.size) {
+                    val n = stream.read(buffer, size, buffer.size - size)
+                    if (n <= 0) break
+                    size += n
+                }
+                buffer.copyOf(size)
+            } ?: return ""
+            if (info.reason == android.app.ApplicationExitInfo.REASON_ANR) {
+                return String(bytes, Charsets.UTF_8).take(3000)
+            }
+            // A native crash record is binary: keep its words, each once.
+            val seen = LinkedHashSet<String>()
+            val word = StringBuilder()
+            fun flush() {
+                val w = word.toString().trim()
+                word.setLength(0)
+                if (w.length < 5) return
+                // Long runs of hex are build ids: no use to a reader.
+                if (w.length >= 16 && w.all { it.isDigit() || it in 'a'..'f' }) return
+                seen.add(w.take(160))
+            }
+            for (b in bytes) {
+                val c = b.toInt()
+                if (c in 32..126) word.append(c.toChar()) else flush()
+                if (seen.size >= 90) break
+            }
+            flush()
+            seen.joinToString("\n").take(3000)
+        } catch (e: Exception) {
+            ""
+        }
     }
 }

@@ -518,6 +518,27 @@ class QuestionRepository {
 
   static const String _bank = "source IN ('seed', 'server')";
 
+  /// A topic on an alarm should have at least this many questions the
+  /// alarm can ask that were never answered.
+  static const int alarmReserve = 5;
+
+  /// Per topic: how many open questions an alarm can ask (not long
+  /// answers) have never been answered. Topics with none are not in the
+  /// map.
+  static Future<Map<String, int>> unseenForAlarms() async {
+    await ensureReady();
+    final rows = await (await _db).rawQuery(
+      'SELECT q.topic_id AS topic_id, COUNT(*) AS n FROM questions q '
+      'JOIN topics t ON t.id = q.topic_id '
+      'WHERE ${_openSql()} AND q.long_answer = 0 AND NOT EXISTS '
+      '(SELECT 1 FROM attempts a WHERE a.question_id = q.id) '
+      'GROUP BY q.topic_id',
+    );
+    return {
+      for (final r in rows) r['topic_id'] as String: (r['n'] as int?) ?? 0,
+    };
+  }
+
   /// Sets every topic out: questions already answered are out, and each
   /// topic has at least [topicBatch] bank questions out (or all it has).
   /// Called after the bank or the history changed. True if anything
@@ -548,12 +569,14 @@ class QuestionRepository {
   static Future<int> revealMore(
     String topicId, [
     int count = topicBatch,
+    bool ordinaryFirst = false,
   ]) async {
     if (count <= 0) return 0;
     return (await _db).rawUpdate(
       'UPDATE questions SET revealed = 1 WHERE id IN '
       '(SELECT id FROM questions WHERE topic_id = ? AND revealed = 0 '
-      'AND $_bank ORDER BY created_at, id LIMIT ?)',
+      'AND $_bank ORDER BY ${ordinaryFirst ? 'long_answer, ' : ''}'
+      'created_at, id LIMIT ?)',
       [topicId, count],
     );
   }
@@ -596,8 +619,12 @@ class QuestionRepository {
     for (final r in rows) {
       final shown = (r['shown'] as int?) ?? 0;
       final done = (r['done'] as int?) ?? 0;
-      if (((r['waiting'] as int?) ?? 0) == 0 || done * 2 < shown) continue;
-      out += await revealMore(r['topic_id'] as String);
+      if (((r['waiting'] as int?) ?? 0) == 0) continue;
+      // Half way through, or nearly out of new ones (a topic whose first
+      // questions are mostly long answers has few an alarm can ask).
+      if (done * 2 < shown && shown - done >= alarmReserve) continue;
+      // Ones an alarm can ask come out first.
+      out += await revealMore(r['topic_id'] as String, topicBatch, true);
     }
     return out;
   }

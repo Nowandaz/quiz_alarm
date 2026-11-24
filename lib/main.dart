@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/home_screen.dart';
+import 'services/crash_log.dart';
 import 'services/account.dart';
 import 'services/announcements.dart';
 import 'services/alarm_backend.dart';
@@ -24,6 +25,8 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Note errors, so a problem report can say what went wrong.
+  CrashLog.install();
   final backend = AlarmBackend.forPlatform();
   try {
     await backend.init();

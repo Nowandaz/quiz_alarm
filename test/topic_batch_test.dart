@@ -116,4 +116,38 @@ void main() {
     expect(ids, contains('srv-029'));
     expect(ids, hasLength(21));
   });
+
+  test('"All of the above" stays under the other options when shuffled', () {
+    const q = Question(
+      id: 'q',
+      topicId: 't',
+      topic: 'T',
+      type: QuestionType.mcq,
+      questionText: 'Which?',
+      options: ['One', 'All of the above', 'Two', 'Three', 'None of the above'],
+      correctAnswer: 'Two',
+    );
+    for (var i = 0; i < 30; i++) {
+      final o = q.shuffled().options;
+      expect(o.sublist(3), ['All of the above', 'None of the above']);
+      expect(o.toSet(), q.options.toSet());
+    }
+  });
+
+  test(
+    'an alarm topic short of askable questions gets ordinary ones first',
+    () async {
+      final topic = await bankTopic(40);
+      final db = await AppDatabase.instance;
+      // The first 30 are long answers: an alarm cannot ask them.
+      await db.rawUpdate(
+        "UPDATE questions SET long_answer = 1 WHERE id < 'srv-030'",
+      );
+      await QuestionRepository.revealBaseline();
+      expect((await QuestionRepository.unseenForAlarms())[topic.id], isNull);
+      expect(await QuestionRepository.revealForAlarms([topic.id]), 20);
+      // The ten ordinary ones came out, ahead of the remaining long ones.
+      expect((await QuestionRepository.unseenForAlarms())[topic.id], 10);
+    },
+  );
 }

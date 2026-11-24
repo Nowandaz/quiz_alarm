@@ -462,17 +462,16 @@ class QuestionService {
     _toppingUp = true;
     try {
       final ids = (await QuestionRepository.resolveTopicIds(selectors)).toSet();
-      final stats = await QuestionRepository.getStats();
+      // Only questions an alarm can ask count: a topic holding nothing
+      // but long answer questions needs ordinary ones written for it.
+      final unseen = await QuestionRepository.unseenForAlarms();
       final low =
           (await QuestionRepository.getTopics())
               .where((t) => ids.contains(t.id))
-              .where((t) => (stats[t.id]?.unseen ?? 0) < targetUnseen)
+              .where((t) => QuestionRepository.isOpen(t))
+              .where((t) => (unseen[t.id] ?? 0) < targetUnseen)
               .toList()
-            ..sort(
-              (a, b) => (stats[a.id]?.unseen ?? 0).compareTo(
-                stats[b.id]?.unseen ?? 0,
-              ),
-            );
+            ..sort((a, b) => (unseen[a.id] ?? 0).compareTo(unseen[b.id] ?? 0));
 
       var added = 0;
       String? error;

@@ -186,8 +186,19 @@ class Question {
 
   /// The same question with its options in a new random order, so the
   /// right answer is not always in the same place.
-  Question shuffled([Random? rng]) =>
-      copyWith(options: List<String>.of(options)..shuffle(rng ?? Random()));
+  Question shuffled([Random? rng]) {
+    // "All of the above" and the like only make sense under the others.
+    final last = options.where(_staysLast).toList();
+    final rest = options.where((o) => !_staysLast(o)).toList()
+      ..shuffle(rng ?? Random());
+    return copyWith(options: [...rest, ...last]);
+  }
+
+  static final RegExp _lastOption = RegExp(
+    r'^\s*(all|none|both|neither|any|some)\b.*\b(above|these|them)\b',
+    caseSensitive: false,
+  );
+  static bool _staysLast(String option) => _lastOption.hasMatch(option);
 
   Question copyWith({String? explanation, List<String>? options}) => Question(
     id: id,

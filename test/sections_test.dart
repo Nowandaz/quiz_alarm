@@ -480,7 +480,7 @@ void main() {
       Widget screen, {
       PlanLevel level = PlanLevel.pro,
     }) async {
-      tester.view.physicalSize = const Size(1600, 3200);
+      tester.view.physicalSize = const Size(1600, 5200);
       tester.view.devicePixelRatio = 3;
       addTearDown(tester.view.reset);
       await tester.runAsync(() async {
@@ -522,6 +522,28 @@ void main() {
       expect(find.text('Topic t9'), findsOneWidget);
       // The unit's own line counts everything.
       expect(find.text('9 topics · 18 questions'), findsOneWidget);
+    });
+
+    testWidgets('searching inside a unit finds topics in any section', (
+      tester,
+    ) async {
+      await show(tester, const UnitScreen(unit: unit));
+      expect(find.byType(BankSearchField), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'topic t9');
+      await tester.pump();
+      expect(find.byType(TopicCard), findsOneWidget);
+      expect(find.byType(SectionCard), findsNothing);
+      expect(find.text('Other topics'), findsNothing);
+      await tester.enterText(find.byType(TextField), 'topic');
+      await tester.pump();
+      expect(find.byType(TopicCard), findsNWidgets(9));
+      await tester.enterText(find.byType(TextField), 'zzz');
+      await tester.pump();
+      expect(find.text('Nothing matches "zzz".'), findsOneWidget);
+      // Clearing brings the sections back.
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pump();
+      expect(find.byType(SectionCard), findsNWidgets(4));
     });
 
     testWidgets('a unit without sections lists its topics as before', (

@@ -17,7 +17,7 @@
 
     <application
         android:label="Brain O\' Clock"
-        android:name="${applicationName}"
+        android:name=".BrainApp"
         android:icon="@mipmap/ic_launcher">
         <!-- Not marked showWhenLocked here on purpose: the app must stay
              behind the lock screen. MainActivity switches that on in code
