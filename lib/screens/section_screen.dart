@@ -34,16 +34,30 @@ void openSection(BuildContext context, Section section) {
   );
 }
 
-class SectionScreen extends StatelessWidget {
+class SectionScreen extends StatefulWidget {
   final Section section;
   const SectionScreen({super.key, required this.section});
+
+  @override
+  State<SectionScreen> createState() => _SectionScreenState();
+}
+
+class _SectionScreenState extends State<SectionScreen> {
+  final TextEditingController _search = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final bank = context.watch<BankProvider>();
     final theme = Theme.of(context);
     // The latest copy: a sync may have renamed it while this is open.
-    final section = bank.sectionById(this.section.id) ?? this.section;
+    final section = bank.sectionById(widget.section.id) ?? widget.section;
     final children = section.isSubunit
         ? bank.filledChildrenOf(section.id)
         : const <Section>[];
@@ -84,7 +98,22 @@ class SectionScreen extends StatelessWidget {
               padding: EdgeInsets.all(24),
               child: Text('No topics yet.', textAlign: TextAlign.center),
             ),
-          if (section.isSubunit)
+          if (topics.length > 6)
+            BankSearchField(
+              controller: _search,
+              hint: section.isSubunit
+                  ? 'Search sections and topics'
+                  : 'Search topics',
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          if (_query.trim().isNotEmpty)
+            ...bankSearchResults(
+              context,
+              query: _query,
+              sections: children,
+              topics: topics,
+            )
+          else if (section.isSubunit)
             for (final child in children) SectionCard(section: child)
           else
             for (final topic in topics)
