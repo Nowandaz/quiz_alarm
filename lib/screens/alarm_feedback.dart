@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 
 import '../data/alarm_log.dart';
 import '../models/models.dart';
+import '../services/crash_log.dart';
 import '../services/alarm_provider.dart';
 import '../services/server_config.dart';
 import '../services/system_bridge.dart';
@@ -99,6 +100,9 @@ Future<Map<String, Object?>> collectAlarmDiagnostics(
     // Android's own record of why the app last stopped: shows a force
     // stop or a kill to save battery.
     'app_exits': exits.take(3).toList(),
+    // What the app noted about its own crashes and errors.
+    'android_crash': await SystemBridge.lastCrash(),
+    'app_errors': await CrashLog.recent(),
     'force_stopped': exits.isEmpty
         ? null
         : exits.take(3).any((e) => e['reason'] == 10 || e['reason'] == 11),

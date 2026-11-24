@@ -194,6 +194,19 @@ class SystemBridge {
     }
   }
 
+  /// The error noted when the app last crashed in its Android code:
+  /// "at" (ms) and "text". Null when it never did.
+  static Future<Map<String, dynamic>?> lastCrash() async {
+    if (!_android) return null;
+    try {
+      final m = await _channel.invokeMapMethod<String, dynamic>('lastCrash');
+      return m;
+    } catch (e) {
+      debugPrint('Reading the last crash failed: $e');
+      return null;
+    }
+  }
+
   /// Opens a web address in the phone's browser. False if it could not.
   static Future<bool> openUrl(String url) async {
     if (!_android) return false;
