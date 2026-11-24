@@ -53,10 +53,18 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const MaterialApp(home: PhoneSetupScreen()));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 50)),
-    );
-    await tester.pump();
+    for (
+      var i = 0;
+      i < 25 && find.text("Permissions").evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 80)),
+      );
+      await tester.pump();
+    }
+    // The phone's own permissions come first, then the maker's steps.
+    expect(find.text('Permissions'), findsOneWidget);
     // Not an Android phone in tests: the general guide.
     expect(find.textContaining('Stop the battery saver'), findsOneWidget);
     expect(find.text('Open settings'), findsWidgets);

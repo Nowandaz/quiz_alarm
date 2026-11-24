@@ -207,6 +207,45 @@ class SystemBridge {
     }
   }
 
+  /// Guards an alarm the app has just set: should the phone close the
+  /// app (or the app crash) while it rings, Android rings it again within
+  /// seconds (RingGuard.kt). [id] is the number the alarm is registered
+  /// under and [at] the moment it is due.
+  static Future<void> watchRing(int id, DateTime at) async {
+    if (!_android) return;
+    try {
+      await _channel.invokeMethod<bool>('watchRing', {
+        'id': id,
+        'at': at.millisecondsSinceEpoch,
+      });
+    } catch (e) {
+      debugPrint('Could not guard alarm $id: $e');
+    }
+  }
+
+  /// Ends the guard for an alarm that is being stopped, so it can never
+  /// be rung again after it was answered.
+  static Future<void> forgetRing(int id) async {
+    if (!_android) return;
+    try {
+      await _channel.invokeMethod<bool>('forgetRing', {'id': id});
+    } catch (e) {
+      debugPrint('Could not end the guard of alarm $id: $e');
+    }
+  }
+
+  /// How many times an alarm had to be brought back because the phone
+  /// closed the app, and when last ("count", "last_at" in ms).
+  static Future<Map<String, dynamic>> ringRevivals() async {
+    if (!_android) return const {};
+    try {
+      return await _channel.invokeMapMethod<String, dynamic>('ringRevivals') ??
+          const {};
+    } catch (e) {
+      return const {};
+    }
+  }
+
   /// Opens a web address in the phone's browser. False if it could not.
   static Future<bool> openUrl(String url) async {
     if (!_android) return false;

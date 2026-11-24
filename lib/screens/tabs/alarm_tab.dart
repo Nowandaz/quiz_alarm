@@ -2,11 +2,14 @@
 /// list of alarms.
 library;
 
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../phone_setup_screen.dart';
 import '../../models/models.dart';
+import '../../services/alarm_backend.dart';
 import '../../services/alarm_provider.dart';
 import '../../services/bank_provider.dart';
 import '../../services/theme_provider.dart';
@@ -133,13 +136,80 @@ class _AlarmTabState extends State<AlarmTab> {
         );
       return;
     }
+    final provider = context.read<AlarmProvider>();
+    final before = provider.alarms.length;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => EditAlarmScreen(existingAlarm: alarm),
         fullscreenDialog: true,
       ),
+    ).then((_) {
+      // The first alarm has just been set: the one moment it is worth
+      // offering the phone's alarm settings, once.
+      if (before == 0 && provider.alarms.length == 1 && context.mounted) {
+        _offerSetUp(context, provider);
+      }
+    });
+  }
+
+  /// After the very first alarm: if the phone still has optional alarm
+  /// settings open, offers the "Set up alarms" page. Once only.
+  Future<void> _offerSetUp(BuildContext context, AlarmProvider provider) async {
+    if (provider.backend.isSimulated) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('setup_offered') ?? false) return;
+    await prefs.setBool('setup_offered', true);
+    if ((await findAlarmProblems()).isEmpty || !context.mounted) return;
+    final go = await showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Your alarm is set',
+                style: Theme.of(ctx).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Take a minute to let your phone ring it properly: a few '
+                'settings, each one tap. You can also do this later from '
+                'the Alarms tab.',
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      child: const Text('Later'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      child: const Text('Set up alarms'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
+    if (go == true && context.mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const PhoneSetupScreen()),
+      );
+    }
   }
 
   @override
@@ -184,7 +254,15 @@ class _AlarmTabState extends State<AlarmTab> {
                   showAdd ? (docked ? 16 : 96 + safeBottom) : 24 + safeBottom,
                 ),
                 children: [
-                  if (!provider.backend.isSimulated) const AlarmHealthBanner(),
+                  if (!provider.backend.isSimulated)
+                    AlarmHealthBanner(
+                      onSetUp: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PhoneSetupScreen(),
+                        ),
+                      ),
+                    ),
                   EveryHalfMinute(
                     key: TourKeys.clock,
                     builder: (context) {
@@ -301,7 +379,8 @@ class _AlarmTabState extends State<AlarmTab> {
                         ),
                       ],
                     ),
-                  if (provider.backend.isSimulated)
+                  if (provider.backend.isSimulated &&
+                      SimulatedAlarmBackend.showHints)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
@@ -321,7 +400,9 @@ class _AlarmTabState extends State<AlarmTab> {
                         alarm: a,
                         topics: bank.describe(a.topics),
                         use24Hour: use24,
-                        simulated: provider.backend.isSimulated,
+                        simulated:
+                            provider.backend.isSimulated &&
+                            SimulatedAlarmBackend.showHints,
                         selecting: selecting,
                         selected: _selected.contains(a.id),
                         onLongPress: () => _toggle(a.id),

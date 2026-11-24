@@ -70,3 +70,12 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // RingGuard.kt reads the alarms the alarm plugin has stored. These are
+    // the plugin's own libraries, at the plugin's versions, named here only
+    // so the app's code can be compiled against them (nothing is added to
+    // the app: the plugin already brings them).
+    compileOnly("androidx.datastore:datastore-preferences:1.0.0")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+}

@@ -945,6 +945,20 @@ class QuestionRepository {
     }
   }
 
+  /// When a question was last answered (in an alarm or in practice), or
+  /// null if none ever was.
+  static Future<DateTime?> lastAnswerAt() async {
+    try {
+      final at = Sqflite.firstIntValue(
+        await (await _db).rawQuery('SELECT MAX(answered_at) FROM attempts'),
+      );
+      return at == null ? null : DateTime.fromMillisecondsSinceEpoch(at);
+    } catch (e) {
+      debugPrint('Could not read the last answer: $e');
+      return null;
+    }
+  }
+
   /// For one topic: question id -> whether the latest answer was correct.
   /// Questions never answered are not in the map.
   static Future<Map<String, bool>> getQuestionProgress(String topicId) async {

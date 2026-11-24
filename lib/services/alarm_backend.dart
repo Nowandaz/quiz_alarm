@@ -15,6 +15,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'system_bridge.dart';
+
 /// One alarm to register with the system.
 class AlarmRequest {
   final int id;
@@ -151,10 +153,16 @@ class NativeAlarmBackend implements AlarmBackend {
     if (!accepted) {
       throw StateError('The phone refused to register alarm ${r.id}');
     }
+    // A second wake-up a few seconds later, which rings the alarm again
+    // if the phone closed the app while it rang. It ends by itself once
+    // the alarm has been answered.
+    await SystemBridge.watchRing(r.id, r.dateTime);
   }
 
   @override
   Future<void> stop(int id) async {
+    // The guard first: an answered alarm must never be rung again.
+    await SystemBridge.forgetRing(id);
     await Alarm.stop(id);
   }
 
@@ -186,6 +194,10 @@ class NativeAlarmBackend implements AlarmBackend {
 
 class SimulatedAlarmBackend implements AlarmBackend {
   static const String _prefKey = 'simulated_alarms';
+
+  /// Whether screens point out that alarms are simulated (the hint and
+  /// the "ring now" bell). Off only when the app is filmed for a demo.
+  static bool showHints = true;
 
   /// Set to false in tests so no audio plugin is touched.
   final bool playSound;

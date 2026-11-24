@@ -1,5 +1,10 @@
-/// Checks the phone settings alarms depend on and shows a warning on the
-/// home screen while any of them is off, with a button to fix each one.
+/// Checks the phone settings alarms depend on.
+///
+/// Only two of them stop an alarm outright (notifications and exact
+/// alarms); those show as a card on the Alarms tab until fixed. The rest
+/// make alarms more dependable and are offered once, quietly, as "Finish
+/// setting up alarms": one line the user can open or put away for good.
+/// Everything is listed, with its state, on the "Set up alarms" page.
 library;
 
 import 'package:flutter/foundation.dart';
@@ -16,7 +21,16 @@ class AlarmProblem {
 
   /// The button's wording ("Fix" unless something else fits better).
   final String action;
-  const AlarmProblem(this.title, this.detail, this.fix, {this.action = 'Fix'});
+
+  /// True when alarms cannot ring (or ring on time) at all without it.
+  final bool critical;
+  const AlarmProblem(
+    this.title,
+    this.detail,
+    this.fix, {
+    this.action = 'Fix',
+    this.critical = false,
+  });
 }
 
 /// Everything currently stopping alarms from working fully. Empty = fine.
@@ -28,10 +42,13 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
     Future<bool> Function() ok,
     String title,
     String detail,
-    Future<void> Function() fix,
-  ) async {
+    Future<void> Function() fix, {
+    bool critical = false,
+  }) async {
     try {
-      if (!await ok()) problems.add(AlarmProblem(title, detail, fix));
+      if (!await ok()) {
+        problems.add(AlarmProblem(title, detail, fix, critical: critical));
+      }
     } catch (e) {
       debugPrint('Alarm check "$title" failed: $e');
     }
@@ -47,12 +64,14 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
     'Notifications are off',
     'Alarms cannot show at all.',
     () => ask(Permission.notification),
+    critical: true,
   );
   await check(
     () => Permission.scheduleExactAlarm.isGranted,
     'Exact alarms are off',
     'Alarms may ring late.',
     () => ask(Permission.scheduleExactAlarm),
+    critical: true,
   );
   await check(
     SystemBridge.canUseFullScreenIntent,
@@ -103,10 +122,27 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
 /// Set once the user has been taken to the autostart page.
 const String autostartSeenPref = 'autostart_seen';
 
-/// The warning card. Shows nothing while everything is allowed. Checks
-/// again whenever the app comes back to the screen (e.g. from Settings).
+/// The optional steps that were still open when the user put "Finish
+/// setting up alarms" away. The line stays away for those; it comes back
+/// only if the phone later switches something ELSE off (an update of the
+/// app can reset "full screen" or "over other apps" on some phones).
+const String setupDismissedPref = 'alarm_setup_dismissed_steps';
+
+/// The last time the phone closed a ringing alarm that the user was told
+/// about (ms).
+const String revivalSeenPref = 'ring_revival_seen';
+
+/// What the Alarms tab says about the phone's settings. Nothing while all
+/// is well. Otherwise, in a calm card:
+///  - something an alarm cannot ring without: what, with a "Fix" button;
+///  - the phone closed a ringing alarm (it was rung again): once, with a
+///    way to the settings that stop that;
+///  - only optional steps left: one line, which can be put away for good.
+/// Checks again whenever the app comes back to the screen.
 class AlarmHealthBanner extends StatefulWidget {
-  const AlarmHealthBanner({super.key});
+  /// Opens the "Set up alarms" page.
+  final VoidCallback? onSetUp;
+  const AlarmHealthBanner({super.key, this.onSetUp});
 
   @override
   State<AlarmHealthBanner> createState() => _AlarmHealthBannerState();
@@ -115,6 +151,8 @@ class AlarmHealthBanner extends StatefulWidget {
 class _AlarmHealthBannerState extends State<AlarmHealthBanner>
     with WidgetsBindingObserver {
   List<AlarmProblem> _problems = [];
+  bool _dismissed = true;
+  int _revivedAt = 0;
 
   @override
   void initState() {
@@ -136,77 +174,186 @@ class _AlarmHealthBannerState extends State<AlarmHealthBanner>
 
   Future<void> _check() async {
     final found = await findAlarmProblems();
-    if (mounted) setState(() => _problems = found);
+    var dismissed = false;
+    var revivedAt = 0;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final putAway = prefs.getStringList(setupDismissedPref);
+      dismissed =
+          putAway != null &&
+          found
+              .where((p) => !p.critical)
+              .every((p) => putAway.contains(p.title));
+      final last =
+          ((await SystemBridge.ringRevivals())['last_at'] as num?)?.toInt() ??
+          0;
+      if (last > (prefs.getInt(revivalSeenPref) ?? 0)) revivedAt = last;
+    } catch (e) {
+      debugPrint('Alarm set-up state could not be read: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _problems = found;
+      _dismissed = dismissed;
+      _revivedAt = revivedAt;
+    });
+  }
+
+  Future<void> _putAway() async {
+    setState(() => _dismissed = true);
+    (await SharedPreferences.getInstance()).setStringList(setupDismissedPref, [
+      for (final p in _problems)
+        if (!p.critical) p.title,
+    ]);
+  }
+
+  Future<void> _sawRevival() async {
+    final at = _revivedAt;
+    setState(() => _revivedAt = 0);
+    (await SharedPreferences.getInstance()).setInt(revivalSeenPref, at);
+  }
+
+  Widget _card(BuildContext context, {required List<Widget> children}) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 6),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final critical = _problems.where((p) => p.critical).toList();
+    final optional = _problems.where((p) => !p.critical).length;
+
+    Widget content = const SizedBox(width: double.infinity);
+    if (critical.isNotEmpty) {
+      content = _card(
+        context,
+        children: [
+          Text(
+            critical.length == 1
+                ? 'One thing before your alarms can ring'
+                : 'Before your alarms can ring',
+            style: theme.textTheme.titleMedium,
+          ),
+          for (final p in critical)
+            Row(
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          p.title,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        Text(p.detail, style: theme.textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                ),
+                FilledButton.tonal(
+                  onPressed: () async {
+                    await p.fix();
+                    await _check();
+                  },
+                  child: Text(p.action),
+                ),
+                const SizedBox(width: 6),
+              ],
+            ),
+          const SizedBox(height: 6),
+        ],
+      );
+    } else if (_revivedAt > 0) {
+      content = _card(
+        context,
+        children: [
+          Text(
+            'Your phone closed the app while an alarm was ringing',
+            style: theme.textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'We rang it again. A few settings stop your phone doing this.',
+            style: theme.textTheme.bodySmall,
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: _sawRevival, child: const Text('OK')),
+              TextButton(
+                onPressed: () {
+                  _sawRevival();
+                  widget.onSetUp?.call();
+                },
+                child: const Text('Show me'),
+              ),
+            ],
+          ),
+        ],
+      );
+    } else if (optional > 0 && !_dismissed) {
+      content = _card(
+        context,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.tune_rounded, color: theme.colorScheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Finish setting up alarms',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    Text(
+                      optional == 1
+                          ? 'One optional step makes them more dependable.'
+                          : '$optional optional steps make them more '
+                                'dependable.',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: _putAway,
+                child: const Text("Don't show again"),
+              ),
+              TextButton(
+                onPressed: widget.onSetUp,
+                child: const Text('Set up'),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
     return AnimatedSize(
       duration: const Duration(milliseconds: 250),
       alignment: Alignment.topCenter,
-      child: _problems.isEmpty
-          ? const SizedBox(width: double.infinity)
-          : Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
-              decoration: BoxDecoration(
-                color: scheme.error.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: scheme.error.withValues(alpha: 0.6)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.warning_amber_rounded, color: scheme.error),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Your alarms may not work properly',
-                          style: theme.textTheme.titleMedium,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  for (final p in _problems)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  p.title,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                Text(
-                                  p.detail,
-                                  style: theme.textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () async {
-                            await p.fix();
-                            await _check();
-                          },
-                          child: Text(p.action),
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
+      child: content,
     );
   }
 }

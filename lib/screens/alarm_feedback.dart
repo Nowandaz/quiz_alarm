@@ -103,6 +103,8 @@ Future<Map<String, Object?>> collectAlarmDiagnostics(
     // What the app noted about its own crashes and errors.
     'android_crash': await SystemBridge.lastCrash(),
     'app_errors': await CrashLog.recent(),
+    // How often the phone closed a ringing alarm and it was rung again.
+    'ring_revivals': await SystemBridge.ringRevivals(),
     'force_stopped': exits.isEmpty
         ? null
         : exits.take(3).any((e) => e['reason'] == 10 || e['reason'] == 11),

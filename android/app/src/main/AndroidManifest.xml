@@ -69,6 +69,8 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
         <!-- Shows the "alarm in 5 minutes" heads-up notification. -->
         <receiver android:name=".PreAlarmReceiver" android:exported="false"/>
+        <!-- Brings a ringing alarm back when the phone closed the app (RingGuard.kt). -->
+        <receiver android:name=".RingGuardReceiver" android:exported="false"/>
         <!-- Puts the heads-up notifications back after the phone restarts or
              the app is updated, without the app having to be opened. -->
         <receiver android:name=".BootReceiver" android:exported="true">
