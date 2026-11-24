@@ -25,7 +25,6 @@ import 'alarm_feedback.dart';
 import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
 import 'messages_screen.dart';
-import 'phone_setup_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/alarm_tab.dart';
 import 'tabs/question_bank_tab.dart';
@@ -371,84 +370,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     await _goToTab(0);
   }
 
+  /// Asks only for what an alarm cannot ring without, once, with the
+  /// phone's own dialogs. Everything else (battery, full screen, opening
+  /// over other apps, autostart) waits on the "Set up alarms" page, which
+  /// the Alarms tab links to quietly: no row of pop-ups at every start.
   Future<void> _requestPermissions() async {
     try {
-      // 1. Request Notification Permission (Required for Android 13+)
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('asked_basics') ?? false) return;
+      await prefs.setBool('asked_basics', true);
       if (await Permission.notification.isDenied) {
         await Permission.notification.request();
       }
-
-      // 2. Request Exact Alarm Permission (Required for Android 12+)
       if (await Permission.scheduleExactAlarm.isDenied) {
         await Permission.scheduleExactAlarm.request();
-      }
-
-      // 3. Battery optimization can delay or kill alarms on many phones.
-      // Ask once only, so we don't nag on every launch.
-      final prefs = await SharedPreferences.getInstance();
-      if (!(prefs.getBool('asked_battery_opt') ?? false)) {
-        await prefs.setBool('asked_battery_opt', true);
-        if (!await Permission.ignoreBatteryOptimizations.isGranted) {
-          await Permission.ignoreBatteryOptimizations.request();
-        }
-      }
-
-      // 4. Opening the quiz by itself when an alarm rings. Two system
-      // switches control that; explain each once before sending the user
-      // to it. Both can be changed later from Settings.
-      if (!mounted) return;
-      if (!(prefs.getBool('asked_full_screen') ?? false) &&
-          !await SystemBridge.canUseFullScreenIntent()) {
-        await prefs.setBool('asked_full_screen', true);
-        if (mounted &&
-            await _explain(
-              'Show the quiz when an alarm rings',
-              'So an alarm can wake the screen and open the questions by '
-                  'itself, allow "Full screen notifications" for Brain O\' Clock '
-                  'on the next page.',
-            )) {
-          await SystemBridge.openFullScreenIntentSettings();
-        }
-      }
-      if (!mounted) return;
-      if (!(prefs.getBool('asked_overlay') ?? false) &&
-          !await Permission.systemAlertWindow.isGranted) {
-        await prefs.setBool('asked_overlay', true);
-        if (mounted &&
-            await _explain(
-              'Open over other apps',
-              'If an alarm rings while you are using another app, Brain O\' Clock '
-                  'can come to the front with the questions. For that, allow '
-                  '"Display over other apps" on the next page.',
-            )) {
-          await Permission.systemAlertWindow.request();
-        }
       }
     } catch (e) {
       debugPrint('Permission request failed: $e');
     }
-  }
-
-  /// Explains a permission before the system page opens. True = go on.
-  Future<bool> _explain(String title, String body) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(body),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Not now'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-    return ok == true;
   }
 
   @override
@@ -511,7 +450,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
-              const PhoneClosedBanner(),
               const UpdateBanner(),
               const MessageBanner(),
               ListenableBuilder(

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../phone_setup_screen.dart';
 import '../../models/models.dart';
 import '../../services/alarm_backend.dart';
 import '../../services/alarm_provider.dart';
@@ -185,7 +186,15 @@ class _AlarmTabState extends State<AlarmTab> {
                   showAdd ? (docked ? 16 : 96 + safeBottom) : 24 + safeBottom,
                 ),
                 children: [
-                  if (!provider.backend.isSimulated) const AlarmHealthBanner(),
+                  if (!provider.backend.isSimulated)
+                    AlarmHealthBanner(
+                      onSetUp: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PhoneSetupScreen(),
+                        ),
+                      ),
+                    ),
                   EveryHalfMinute(
                     key: TourKeys.clock,
                     builder: (context) {

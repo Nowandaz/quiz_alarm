@@ -148,6 +148,15 @@ class MainActivity : FlutterActivity() {
                         ringing = on
                         handler.removeCallbacks(hideAgain)
                         overLockScreen(on)
+                        // While it rings the app is kept out of recent
+                        // apps, so it cannot be swiped away (many phones
+                        // close a swiped app, alarm and all).
+                        try {
+                            val manager =
+                                getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                            for (task in manager.appTasks) task.setExcludeFromRecents(on)
+                        } catch (e: Exception) {
+                        }
                         // Power saving mode shortens the screen timeout;
                         // this keeps the display awake while answering.
                         if (on) {
@@ -281,6 +290,34 @@ class MainActivity : FlutterActivity() {
                             result.success(true)
                         } catch (e: Exception) {
                             result.success(false)
+                        }
+                    }
+                    "watchRing" -> {
+                        // Guard an alarm the app has just set (RingGuard).
+                        try {
+                            RingGuard.watch(
+                                applicationContext,
+                                call.argument<Int>("id") ?: 0,
+                                (call.argument<Number>("at") ?: 0).toLong()
+                            )
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "forgetRing" -> {
+                        try {
+                            RingGuard.forget(applicationContext, call.argument<Int>("id") ?: 0)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                    "ringRevivals" -> {
+                        try {
+                            result.success(RingGuard.revivals(applicationContext))
+                        } catch (e: Exception) {
+                            result.success(null)
                         }
                     }
                     "openAutostartSettings" -> {
@@ -471,7 +508,11 @@ class MainActivity : FlutterActivity() {
             if (info.reason == android.app.ApplicationExitInfo.REASON_ANR) {
                 return String(bytes, Charsets.UTF_8).take(3000)
             }
-            // A native crash record is binary: keep its words, each once.
+            // A native crash record: the signal, the reason and what the
+            // crashed thread was running, when it can be read that way.
+            val told = try { Tombstone.summary(bytes) } catch (e: Throwable) { "" }
+            if (told.lines().size >= 3) return told
+            // Otherwise keep its words, each once.
             val seen = LinkedHashSet<String>()
             val word = StringBuilder()
             fun flush() {

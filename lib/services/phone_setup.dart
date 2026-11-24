@@ -212,35 +212,8 @@ class PhoneSetup {
   static Future<PhoneGuide> guide() async =>
       guideFor('${(await SystemBridge.deviceInfo())['manufacturer'] ?? ''}');
 
-  // ------------------------------------------------- "the phone closed me"
-
-  /// The last closing of the app the user was already told about.
-  static const String seenPref = 'phone_setup_seen_exit';
-
   /// Steps the user ticked as done (the app cannot read most of them).
   static const String donePref = 'phone_setup_done';
-
-  /// When the phone last force-closed the app (which cancels its alarms),
-  /// in milliseconds; null when it has not, or the user was already told.
-  /// Android reports a cleaner's "force stop" the same way as one from
-  /// Settings (reasons 10 and 11).
-  static Future<int?> closedByPhone() async {
-    final exits = await SystemBridge.exitReasons();
-    var latest = 0;
-    for (final e in exits) {
-      if (e['reason'] != 10 && e['reason'] != 11) continue;
-      final at = (e['at'] as num?)?.toInt() ?? 0;
-      if (at > latest) latest = at;
-    }
-    if (latest == 0) return null;
-    final prefs = await SharedPreferences.getInstance();
-    return latest > (prefs.getInt(seenPref) ?? 0) ? latest : null;
-  }
-
-  /// The user has seen the note about the closing at [at].
-  static Future<void> markSeen(int at) async {
-    (await SharedPreferences.getInstance()).setInt(seenPref, at);
-  }
 
   static Future<Set<String>> doneSteps() async =>
       ((await SharedPreferences.getInstance()).getStringList(donePref) ??

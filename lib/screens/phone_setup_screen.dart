@@ -1,12 +1,14 @@
-/// "Set up this phone for alarms": the steps for this make of phone,
-/// each with where the setting is and a button that opens it. Also the
-/// note on the first screen after the phone closed the app.
+/// "Set up alarms": everything on the phone that alarms depend on, in one
+/// place. First what Android itself can be asked for, each with its state
+/// and one button; then the steps for this make of phone, each with where
+/// the setting is and a button that opens it.
 library;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/phone_setup.dart';
+import '../widgets/alarm_health.dart';
 import '../services/system_bridge.dart';
 
 class PhoneSetupScreen extends StatefulWidget {
@@ -21,6 +23,9 @@ class _PhoneSetupScreenState extends State<PhoneSetupScreen>
   PhoneGuide? _guide;
   Set<String> _done = {};
 
+  // What Android can still be asked for (empty: all allowed).
+  List<AlarmProblem> _problems = const [];
+
   @override
   void initState() {
     super.initState();
@@ -34,13 +39,21 @@ class _PhoneSetupScreenState extends State<PhoneSetupScreen>
     super.dispose();
   }
 
+  // Back from a settings page: the states may have changed.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _load();
+  }
+
   Future<void> _load() async {
     final guide = await PhoneSetup.guide();
     final done = await PhoneSetup.doneSteps();
+    final problems = await findAlarmProblems();
     if (!mounted) return;
     setState(() {
       _guide = guide;
       _done = done;
+      _problems = problems;
     });
   }
 
@@ -67,7 +80,7 @@ class _PhoneSetupScreenState extends State<PhoneSetupScreen>
     final theme = Theme.of(context);
     final guide = _guide;
     return Scaffold(
-      appBar: AppBar(title: const Text('Set up this phone')),
+      appBar: AppBar(title: const Text('Set up alarms')),
       body: guide == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -78,6 +91,73 @@ class _PhoneSetupScreenState extends State<PhoneSetupScreen>
                 24 + MediaQuery.paddingOf(context).bottom,
               ),
               children: [
+                Card(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 8, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Permissions', style: theme.textTheme.titleMedium),
+                        const SizedBox(height: 4),
+                        if (_problems.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.check_circle_rounded,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 10),
+                                const Expanded(
+                                  child: Text(
+                                    'Everything alarms need is allowed.',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        for (final p in _problems)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        p.title,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      Text(
+                                        p.detail,
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                FilledButton.tonal(
+                                  onPressed: () async {
+                                    await p.fix();
+                                    await _load();
+                                  },
+                                  child: Text(
+                                    p.action == 'Fix' ? 'Allow' : p.action,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
                 Text(
                   '${guide.phones} close apps to save battery. When that '
                   'happens to an alarm app, its alarms are cancelled and '
@@ -158,83 +238,6 @@ class _PhoneSetupScreenState extends State<PhoneSetupScreen>
                 ),
               ],
             ),
-    );
-  }
-}
-
-/// On the first screen after the phone force-closed the app: says what
-/// happened (the alarms were cancelled until now) and leads to the guide.
-class PhoneClosedBanner extends StatefulWidget {
-  const PhoneClosedBanner({super.key});
-
-  @override
-  State<PhoneClosedBanner> createState() => _PhoneClosedBannerState();
-}
-
-class _PhoneClosedBannerState extends State<PhoneClosedBanner> {
-  int? _closedAt;
-
-  @override
-  void initState() {
-    super.initState();
-    PhoneSetup.closedByPhone().then((at) {
-      if (mounted && at != null) setState(() => _closedAt = at);
-    });
-  }
-
-  void _dismiss() {
-    final at = _closedAt;
-    if (at != null) PhoneSetup.markSeen(at);
-    setState(() => _closedAt = null);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_closedAt == null) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
-      decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.warning_amber_rounded, color: scheme.onErrorContainer),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Your phone closed Brain O\' Clock, which cancels its '
-                  'alarms until the app is opened again. They are set '
-                  'again now. A few settings stop this happening.',
-                  style: TextStyle(color: scheme.onErrorContainer, height: 1.3),
-                ),
-              ),
-            ],
-          ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(onPressed: _dismiss, child: const Text('Not now')),
-              TextButton(
-                onPressed: () {
-                  _dismiss();
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const PhoneSetupScreen()),
-                  );
-                },
-                child: const Text('Show me'),
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 }
