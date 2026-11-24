@@ -4,6 +4,8 @@
 /// (sign in, plan, sync, deleting the account) and Privacy.
 library;
 
+import 'phone_setup_screen.dart';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -529,6 +531,20 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   List<Widget> _permissions() {
     final rows = <Widget>[
+      if (_android)
+        ListTile(
+          leading: const Icon(Icons.phonelink_setup_rounded),
+          title: const Text('Set up this phone for alarms'),
+          subtitle: const Text(
+            'Where to find the settings that stop your phone closing '
+            'the app and cancelling its alarms.',
+          ),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const PhoneSetupScreen()),
+          ),
+        ),
       if (_needsAutostart)
         ListTile(
           leading: const Icon(Icons.restart_alt_rounded),

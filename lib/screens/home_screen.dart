@@ -25,6 +25,7 @@ import 'alarm_feedback.dart';
 import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
 import 'messages_screen.dart';
+import 'phone_setup_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/alarm_tab.dart';
 import 'tabs/question_bank_tab.dart';
@@ -510,6 +511,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ],
                 ),
               ),
+              const PhoneClosedBanner(),
               const UpdateBanner(),
               const MessageBanner(),
               ListenableBuilder(
