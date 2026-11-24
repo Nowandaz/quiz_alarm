@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/models.dart';
+import '../../services/alarm_backend.dart';
 import '../../services/alarm_provider.dart';
 import '../../services/bank_provider.dart';
 import '../../services/theme_provider.dart';
@@ -301,7 +302,8 @@ class _AlarmTabState extends State<AlarmTab> {
                         ),
                       ],
                     ),
-                  if (provider.backend.isSimulated)
+                  if (provider.backend.isSimulated &&
+                      SimulatedAlarmBackend.showHints)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Text(
@@ -321,7 +323,9 @@ class _AlarmTabState extends State<AlarmTab> {
                         alarm: a,
                         topics: bank.describe(a.topics),
                         use24Hour: use24,
-                        simulated: provider.backend.isSimulated,
+                        simulated:
+                            provider.backend.isSimulated &&
+                            SimulatedAlarmBackend.showHints,
                         selecting: selecting,
                         selected: _selected.contains(a.id),
                         onLongPress: () => _toggle(a.id),

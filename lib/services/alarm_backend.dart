@@ -187,6 +187,10 @@ class NativeAlarmBackend implements AlarmBackend {
 class SimulatedAlarmBackend implements AlarmBackend {
   static const String _prefKey = 'simulated_alarms';
 
+  /// Whether screens point out that alarms are simulated (the hint and
+  /// the "ring now" bell). Off only when the app is filmed for a demo.
+  static bool showHints = true;
+
   /// Set to false in tests so no audio plugin is touched.
   final bool playSound;
 
