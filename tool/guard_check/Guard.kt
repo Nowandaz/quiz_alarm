@@ -21,14 +21,20 @@ fun main() {
     expect("ringing: nothing rung twice, looks again", RingGuard.check(c, 7) == "ringing" && AlarmScheduler.scheduled.isEmpty() && AlarmManager.armed[7]!! > now)
 
     AlarmService.ringing = listOf()   // the phone closed the app
-    expect("closed while ringing: rung again", RingGuard.check(c, 7) == "revived" && AlarmScheduler.scheduled == listOf(7))
+    expect("silent on the first look: not rung yet, asks for a second look", RingGuard.check(c, 7) == "confirm" && AlarmScheduler.scheduled.isEmpty())
+    expect("closed while ringing: rung again on the second look", RingGuard.check(c, 7, confirmed = true) == "revived" && AlarmScheduler.scheduled == listOf(7))
     expect("and it keeps looking", AlarmManager.armed[7]!! > now)
     expect("the revival is counted", (RingGuard.revivals(c)["count"] as Int) == 1)
 
     AlarmService.ringing = listOf(7)
     expect("back and ringing: left alone", RingGuard.check(c, 7) == "ringing" && AlarmScheduler.scheduled.size == 1)
 
+    // Answered in the instant between the two looks: never rung again.
+    AlarmService.ringing = listOf()
+    expect("silenced, first look", RingGuard.check(c, 7) == "confirm")
     AlarmStorage.saved.clear()        // answered
+    expect("answered before the second look: NOT rung again", RingGuard.check(c, 7, confirmed = true) == "over" && AlarmScheduler.scheduled.size == 1)
+    RingGuard.watch(c, 7, now - 5_000); AlarmStorage.saved.clear()
     expect("answered: the guard ends", RingGuard.check(c, 7) == "over" && !AlarmManager.armed.containsKey(7))
     expect("and is forgotten", RingGuard.check(c, 7) == "unknown")
 

@@ -122,8 +122,11 @@ Future<List<AlarmProblem>> findAlarmProblems() async {
 /// Set once the user has been taken to the autostart page.
 const String autostartSeenPref = 'autostart_seen';
 
-/// Set when the user put "Finish setting up alarms" away.
-const String setupDismissedPref = 'alarm_setup_dismissed';
+/// The optional steps that were still open when the user put "Finish
+/// setting up alarms" away. The line stays away for those; it comes back
+/// only if the phone later switches something ELSE off (an update of the
+/// app can reset "full screen" or "over other apps" on some phones).
+const String setupDismissedPref = 'alarm_setup_dismissed_steps';
 
 /// The last time the phone closed a ringing alarm that the user was told
 /// about (ms).
@@ -175,7 +178,12 @@ class _AlarmHealthBannerState extends State<AlarmHealthBanner>
     var revivedAt = 0;
     try {
       final prefs = await SharedPreferences.getInstance();
-      dismissed = prefs.getBool(setupDismissedPref) ?? false;
+      final putAway = prefs.getStringList(setupDismissedPref);
+      dismissed =
+          putAway != null &&
+          found
+              .where((p) => !p.critical)
+              .every((p) => putAway.contains(p.title));
       final last =
           ((await SystemBridge.ringRevivals())['last_at'] as num?)?.toInt() ??
           0;
@@ -193,7 +201,10 @@ class _AlarmHealthBannerState extends State<AlarmHealthBanner>
 
   Future<void> _putAway() async {
     setState(() => _dismissed = true);
-    (await SharedPreferences.getInstance()).setBool(setupDismissedPref, true);
+    (await SharedPreferences.getInstance()).setStringList(setupDismissedPref, [
+      for (final p in _problems)
+        if (!p.critical) p.title,
+    ]);
   }
 
   Future<void> _sawRevival() async {

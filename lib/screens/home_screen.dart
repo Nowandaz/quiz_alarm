@@ -24,6 +24,7 @@ import 'account_screen.dart';
 import 'alarm_feedback.dart';
 import '../widgets/coach_tour.dart';
 import 'alarm_ring_screen.dart';
+import 'dare_sheet.dart';
 import 'messages_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/alarm_tab.dart';
@@ -96,7 +97,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
       // Already signed in: an old "without an account" choice is over.
       if (Account.instance.isSignedIn) GuestMode.clear();
-      _welcome(simulated: provider.backend.isSimulated);
+      _welcome(simulated: provider.backend.isSimulated)
+          .then((_) => _maybeDare());
 
       provider.onAlarmTriggered = (alarm) async {
         if (!mounted) {
@@ -171,8 +173,39 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // Coming back to the app is also a moment to look for an update.
     UpdateCheck.run();
     Announcements.run();
+    _maybeDare();
     if (!Provider.of<AlarmProvider>(context, listen: false).isAlarmRinging) {
       SystemBridge.setAlarmScreen(false);
+    }
+  }
+
+  bool _daring = false;
+
+  /// "It's been a minute. Dare to answer this?": for someone who has not
+  /// answered anything for half a day and has no alarm on. Only on the
+  /// plain first screen: never while an alarm rings or anything else (a
+  /// dialog, another page) is in front.
+  Future<void> _maybeDare() async {
+    if (_daring || !mounted) return;
+    _daring = true;
+    try {
+      final provider = Provider.of<AlarmProvider>(context, listen: false);
+      await provider.loaded;
+      // Let the screen settle (and a ringing alarm take over) first.
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      if (!mounted || provider.isAlarmRinging) return;
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+        return;
+      }
+      await maybeShowDare(
+        context,
+        anyAlarmOn: provider.alarms.any((a) => a.isEnabled),
+      );
+    } catch (e) {
+      debugPrint('The quick question could not be offered: $e');
+    } finally {
+      _daring = false;
     }
   }
 

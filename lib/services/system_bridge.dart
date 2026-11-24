@@ -223,6 +223,17 @@ class SystemBridge {
     }
   }
 
+  /// Ends the guard for an alarm that is being stopped, so it can never
+  /// be rung again after it was answered.
+  static Future<void> forgetRing(int id) async {
+    if (!_android) return;
+    try {
+      await _channel.invokeMethod<bool>('forgetRing', {'id': id});
+    } catch (e) {
+      debugPrint('Could not end the guard of alarm $id: $e');
+    }
+  }
+
   /// How many times an alarm had to be brought back because the phone
   /// closed the app, and when last ("count", "last_at" in ms).
   static Future<Map<String, dynamic>> ringRevivals() async {

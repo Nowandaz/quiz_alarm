@@ -92,8 +92,15 @@ object RingGuard {
             .edit().remove(id.toString()).apply()
     }
 
-    /** The guard's moment has come for alarm [id]. Returns what it did. */
-    fun check(context: Context, id: Int): String {
+    /**
+     * The guard's moment has come for alarm [id]. Returns what it did.
+     *
+     * An alarm is never rung again on one look alone: a silent, unanswered
+     * alarm first gets "confirm", and only a second look two seconds later
+     * ([confirmed]) rings it. That way an alarm caught in the instant of
+     * being answered (silenced, not yet removed) is never brought back.
+     */
+    fun check(context: Context, id: Int, confirmed: Boolean = false): String {
         val store = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
         if (!store.contains(id.toString())) return "unknown"
         val ringAt = store.getLong(id.toString(), 0L)
@@ -124,8 +131,12 @@ object RingGuard {
         } catch (e: Throwable) {
             false
         }
+        if (!ringing && !confirmed) {
+            arm(context, id, now + CHECK_EVERY_MS)
+            return "confirm"
+        }
         if (!ringing) {
-            // Due and unanswered, yet silent: ring it again.
+            // Due and unanswered, yet silent, twice in a row: ring it again.
             try {
                 AlarmScheduler.schedule(context, saved)
                 store.edit().putInt("revived", store.getInt("revived", 0) + 1)
@@ -194,15 +205,27 @@ class RingGuardReceiver : BroadcastReceiver() {
         // Ringing again is handed to the main thread a moment later, so the
         // process must stay alive until then.
         val result = goAsync()
-        try {
-            RingGuard.check(context.applicationContext, id)
+        val app = context.applicationContext
+        val main = Handler(Looper.getMainLooper())
+        val outcome = try {
+            RingGuard.check(app, id)
         } catch (e: Throwable) {
+            ""
         }
-        Handler(Looper.getMainLooper()).postDelayed({
+        if (outcome == "confirm") {
+            // Silent and unanswered: look once more before ringing it.
+            main.postDelayed({
+                try {
+                    RingGuard.check(app, id, confirmed = true)
+                } catch (e: Throwable) {
+                }
+            }, 2_000L)
+        }
+        main.postDelayed({
             try {
                 result.finish()
             } catch (e: Throwable) {
             }
-        }, 3_000L)
+        }, 6_000L)
     }
 }

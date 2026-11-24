@@ -161,6 +161,8 @@ class NativeAlarmBackend implements AlarmBackend {
 
   @override
   Future<void> stop(int id) async {
+    // The guard first: an answered alarm must never be rung again.
+    await SystemBridge.forgetRing(id);
     await Alarm.stop(id);
   }
 
