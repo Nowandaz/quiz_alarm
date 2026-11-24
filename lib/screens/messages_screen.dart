@@ -2,6 +2,8 @@
 /// shows the newest unread one on the first screen.
 library;
 
+import 'dart:async';
+
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -88,93 +90,88 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 }
 
-/// The newest unread message, on the first screen.
-class MessageBanner extends StatelessWidget {
+/// Pops the newest unread message up over the first screen. It waits
+/// while another screen (a ringing alarm, the editor) is on top.
+class MessageBanner extends StatefulWidget {
   const MessageBanner({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return ValueListenableBuilder<Announcement?>(
-      valueListenable: Announcements.unread,
-      builder: (context, a, _) {
-        if (a == null) return const SizedBox.shrink();
-        return Container(
-          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          padding: const EdgeInsets.fromLTRB(14, 10, 6, 6),
-          decoration: BoxDecoration(
-            color: scheme.secondaryContainer,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Icon(
-                      Icons.campaign_rounded,
-                      color: scheme.onSecondaryContainer,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          a.title,
-                          style: TextStyle(
-                            color: scheme.onSecondaryContainer,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        if (a.body.isNotEmpty)
-                          Text(
-                            a.body,
-                            maxLines: 4,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: scheme.onSecondaryContainer,
-                              height: 1.3,
-                              fontSize: 13,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const MessagesScreen()),
-                    ),
-                    child: const Text('All messages'),
-                  ),
-                  if (a.link.isNotEmpty)
-                    TextButton(
-                      onPressed: () {
-                        Announcements.open(a);
-                        Announcements.markRead();
-                      },
-                      child: const Text('Open'),
-                    ),
-                  TextButton(
-                    onPressed: Announcements.markRead,
-                    child: const Text('OK'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
+  State<MessageBanner> createState() => _MessageBannerState();
+}
+
+class _MessageBannerState extends State<MessageBanner> {
+  bool _showing = false;
+  Timer? _retry;
+
+  @override
+  void initState() {
+    super.initState();
+    Announcements.unread.addListener(_maybeShow);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShow());
   }
+
+  @override
+  void dispose() {
+    Announcements.unread.removeListener(_maybeShow);
+    _retry?.cancel();
+    super.dispose();
+  }
+
+  void _maybeShow() {
+    _retry?.cancel();
+    final a = Announcements.unread.value;
+    if (!mounted || _showing || a == null) return;
+    if (ModalRoute.of(context)?.isCurrent != true) {
+      // Something else is on top: look again shortly.
+      _retry = Timer(const Duration(seconds: 3), _maybeShow);
+      return;
+    }
+    _show(a);
+  }
+
+  Future<void> _show(Announcement a) async {
+    _showing = true;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.campaign_rounded),
+        title: Text(a.title),
+        content: a.body.isEmpty
+            ? null
+            : SingleChildScrollView(
+                child: Text(a.body, style: const TextStyle(height: 1.35)),
+              ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'all'),
+            child: const Text('All messages'),
+          ),
+          if (a.link.isNotEmpty)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'open'),
+              child: const Text('Open'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'ok'),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    // Seen, however it was closed.
+    await Announcements.markRead();
+    _showing = false;
+    if (!mounted) return;
+    if (choice == 'open') {
+      Announcements.open(a);
+    } else if (choice == 'all') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const MessagesScreen()),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

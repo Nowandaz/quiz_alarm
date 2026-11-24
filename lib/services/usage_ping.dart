@@ -7,7 +7,7 @@
 /// added only while "Share alarm diagnostics" is on in Settings.
 ///
 /// Sent at most once per calendar day, and again when the plan level
-/// changes. A failed send is simply tried again at the next app start.
+/// or the app version changes. A failed send is simply tried again at the next app start.
 /// Nothing here ever throws or gets in the app's way.
 library;
 
@@ -42,7 +42,20 @@ class UsagePing {
   /// The plan level the last ping carried.
   static const String levelPref = 'usage_ping_level';
 
+  /// The app version the last ping carried.
+  static const String versionPref = 'usage_ping_version';
+
   static Future<bool>? _sending;
+
+  /// The version Android says is installed; the constant otherwise.
+  static Future<String> _version() async {
+    try {
+      final v = '${(await SystemBridge.deviceInfo())['app_version'] ?? ''}'
+          .trim();
+      if (v.isNotEmpty) return v;
+    } catch (_) {}
+    return ServerConfig.appVersion;
+  }
 
   /// Sends the ping if today's has not gone yet, or the plan level is
   /// not the one last sent. True when one was sent. Never throws.
@@ -96,8 +109,11 @@ class UsagePing {
           '${t.year}-${t.month.toString().padLeft(2, '0')}-'
           '${t.day.toString().padLeft(2, '0')}';
       final level = Entitlements.instance.level.name;
+      // After an update the owner should see the new version at once.
+      final version = await _version();
       if (prefs.getString(dayPref) == day &&
-          prefs.getString(levelPref) == level) {
+          prefs.getString(levelPref) == level &&
+          prefs.getString(versionPref) == version) {
         return false;
       }
 
@@ -131,7 +147,7 @@ class UsagePing {
             body: jsonEncode({
               'install': install,
               'level': level,
-              'version': ServerConfig.appVersion,
+              'version': version,
               'platform': kIsWeb
                   ? 'web'
                   : defaultTargetPlatform.name.toLowerCase(),
@@ -151,6 +167,7 @@ class UsagePing {
       await prefs.setString(installPref, install);
       await prefs.setString(dayPref, day);
       await prefs.setString(levelPref, level);
+      await prefs.setString(versionPref, version);
       return true;
     } catch (e) {
       debugPrint('Usage ping failed (will try again): $e');
