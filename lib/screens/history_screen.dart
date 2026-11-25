@@ -13,6 +13,7 @@ import '../models/models.dart';
 import '../services/question_service.dart';
 import '../services/theme_provider.dart';
 import '../widgets/app_widgets.dart';
+import 'alarm_feedback.dart';
 import 'session_screen.dart';
 import 'tabs/reports_tab.dart' show formatDuration;
 
@@ -142,29 +143,54 @@ class SessionCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 5),
       clipBehavior: Clip.antiAlias,
-      child: ListTile(
-        leading: Container(
-          width: 42,
-          height: 42,
-          decoration: BoxDecoration(
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(13),
+      child: Column(
+        children: [
+          ListTile(
+            leading: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: theme.colorScheme.onSurface, size: 22),
+            ),
+            title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              '${DateFormat('EEE d MMM').format(s.startedAt)}, '
+              '${formatClock(s.startedAt, use24Hour: context.watch<ThemeProvider>().use24Hour)}\n'
+              '${parts.join(' · ')}',
+              style: theme.textTheme.bodySmall,
+            ),
+            isThreeLine: true,
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(
+                builder: (_) => SessionScreen(session: s),
+              ),
+            ),
           ),
-          child: Icon(icon, color: theme.colorScheme.onSurface, size: 22),
-        ),
-        title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(
-          '${DateFormat('EEE d MMM').format(s.startedAt)}, '
-          '${formatClock(s.startedAt, use24Hour: context.watch<ThemeProvider>().use24Hour)}\n'
-          '${parts.join(' · ')}',
-          style: theme.textTheme.bodySmall,
-        ),
-        isThreeLine: true,
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute<void>(builder: (_) => SessionScreen(session: s)),
-        ),
+          // An alarm that was never switched off by answering can be
+          // reported from here, with what the phone knows about it.
+          if (s.alarmNotFinished)
+            Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 8, bottom: 4),
+                child: TextButton.icon(
+                  onPressed: () => showAlarmFeedback(
+                    context,
+                    alarmId: s.alarmId,
+                    problem: 'stopped',
+                    scheduled: s.startedAt,
+                  ),
+                  icon: const Icon(Icons.flag_outlined, size: 18),
+                  label: const Text('Report this alarm'),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }

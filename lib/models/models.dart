@@ -271,6 +271,9 @@ class StudySession {
   final int questions;
   final int correct;
 
+  /// The alarm that rang, for an alarm session (null for practice).
+  final int? alarmId;
+
   const StudySession({
     required this.id,
     required this.kind,
@@ -281,9 +284,16 @@ class StudySession {
     this.requiredStreak,
     this.questions = 0,
     this.correct = 0,
+    this.alarmId,
   });
 
   Duration? get duration => endedAt?.difference(startedAt);
+
+  /// An alarm that rang but was never switched off by answering: it was
+  /// cut short (the app closed or crashed) or rang until it gave up.
+  /// These can be reported from History.
+  bool get alarmNotFinished =>
+      kind == 'alarm' && (outcome == null || outcome == 'timed_out');
 }
 
 /// One answered question inside a session.
