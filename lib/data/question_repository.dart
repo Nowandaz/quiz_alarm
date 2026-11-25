@@ -1158,6 +1158,7 @@ class QuestionRepository {
             requiredStreak: r['required_streak'] as int?,
             questions: (r['questions'] as int?) ?? 0,
             correct: (r['correct_count'] as int?) ?? 0,
+            alarmId: r['alarm_id'] as int?,
           ),
         )
         .toList();
