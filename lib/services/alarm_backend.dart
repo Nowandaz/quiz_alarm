@@ -84,6 +84,9 @@ abstract class AlarmBackend {
 }
 
 class NativeAlarmBackend implements AlarmBackend {
+  /// How loud a fading-in alarm is at its first moment (1 = full).
+  static const double fadeStartLevel = 0.35;
+
   @override
   bool get isSimulated => false;
 
@@ -115,10 +118,16 @@ class NativeAlarmBackend implements AlarmBackend {
         vibrate: r.vibrate,
         // Played on the phone's ALARM volume, raised to [r.volume] and
         // held there: the volume keys cannot turn it down while it rings.
+        // A fade-in starts clearly audible and rises to full, not from
+        // silence: from silence the first seconds cannot be heard, which
+        // feels like the alarm ringing late.
         volumeSettings: fade > Duration.zero
-            ? VolumeSettings.fade(
+            ? VolumeSettings.staircaseFade(
                 volume: r.volume,
-                fadeDuration: fade,
+                fadeSteps: [
+                  VolumeFadeStep(Duration.zero, fadeStartLevel),
+                  VolumeFadeStep(fade, 1),
+                ],
                 volumeEnforced: true,
               )
             : VolumeSettings.fixed(volume: r.volume, volumeEnforced: true),
