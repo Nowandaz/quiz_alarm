@@ -18,8 +18,9 @@ import com.gdelataillade.alarm.services.AlarmStorage
  * Many phones close an app the moment it is swiped out of recent apps
  * (or "cleaned" on lock), and an app can crash. Either way the ringing
  * stops and nothing restarts it. This is a second, independent wake-up:
- * for every alarm the app sets, the guard is scheduled a few seconds
- * after it. When the guard fires it looks at the alarm:
+ * for every alarm the app sets, the guard is scheduled six seconds
+ * after it (Android allows nothing much shorter), and again every six
+ * seconds while the alarm is unanswered. Each time it looks at the alarm:
  *
  *  - no longer stored (answered, snoozed, cancelled): nothing to do;
  *  - still ringing: all is well, look again shortly;
@@ -36,7 +37,7 @@ object RingGuard {
     private const val STORE = "ring_guard"
 
     /** How soon after the alarm, and then how often, the guard looks. */
-    const val CHECK_EVERY_MS = 20_000L
+    const val CHECK_EVERY_MS = 6_000L
 
     /** Unanswered for this long: stop bringing it back. */
     private const val GIVE_UP_AFTER_MS = 30 * 60_000L
@@ -96,7 +97,7 @@ object RingGuard {
      * The guard's moment has come for alarm [id]. Returns what it did.
      *
      * An alarm is never rung again on one look alone: a silent, unanswered
-     * alarm first gets "confirm", and only a second look two seconds later
+     * alarm first gets "confirm", and only a second look a moment later
      * ([confirmed]) rings it. That way an alarm caught in the instant of
      * being answered (silenced, not yet removed) is never brought back.
      */
@@ -219,7 +220,7 @@ class RingGuardReceiver : BroadcastReceiver() {
                     RingGuard.check(app, id, confirmed = true)
                 } catch (e: Throwable) {
                 }
-            }, 2_000L)
+            }, 1_500L)
         }
         main.postDelayed({
             try {
